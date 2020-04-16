@@ -1,4 +1,6 @@
 背景：第一次部门内部算法竞赛
 主题：审计科目名称文字归类
 语种：日语
-尝试算法：tfidf，bag gram
+语言：python
+尝试算法：tfidf，bag of words
+参考：Datacamp
