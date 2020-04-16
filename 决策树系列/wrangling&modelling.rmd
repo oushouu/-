@@ -1,0 +1,794 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r import library}
+# change console language to English
+Sys.setenv(LANGUAGE = "en")
+
+# import library
+library(tidyverse)
+library(lubridate)
+library(magrittr)
+
+library(rpart) #for decision tree
+library(rpart.plot) #for plot trees
+library(caret) #for calling confusion matrix
+library(ROCR) #for ploting roc curve
+library(ModelMetrics) # for calling ce() auc() function
+library(ipred) # for call bagging()
+library(randomForest)
+library(IDPmisc) # for removing inf na.action = NaRV.omit
+library(gbm) #for calling gradient boosting machines
+library(openxlsx) #for save reults in xlsx sheets
+```
+
+```{r show directory file}
+list.files(path = "./002_LossCon/devdata")
+```
+
+# devdata information
+
+　　　train.txt	‥年月ごとのプロジェクト（明細レベル）の状況を表す開発用データ
+　　　test1.txt	‥ 2018年12月時点までのテスト用データ
+　　　test1s.txt	‥ 「test1.txt」のうち、受注売価が5億円超のプロジェクトのみのテスト用データ
+　　　test2.txt	‥ 2019年3月時点までのテスト用データ
+　　　test2s.txt	‥ 「test2.txt」のうち、受注売価が5億円超のプロジェクトのみのテスト用データ
+　　　losscon.txt	‥各プロジェクトについて、四半期ごとにロスコンかどうかを判定したデータ
+
+```{r read data}
+train <- read.delim("./002_LossCon/devdata/train.txt")
+losscon <- read.delim("./002_LossCon/devdata/losscon.txt")
+test1 <- read.delim("./002_LossCon/devdata/test1.txt")
+test1s <- read.delim("./002_LossCon/devdata/test1s.txt")
+test2 <- read.delim("./002_LossCon/devdata/test2.txt")
+test2s <- read.delim("./002_LossCon/devdata/test2s.txt")
+
+import_name_list <- c("train", "test1", "test1s", "test2", "test2s")
+
+# put train test datasets into a list for loop processing
+import_data <- list()
+import_data$train <- train
+import_data$test1 <- test1
+import_data$test1s <- test1s
+import_data$test2 <- test2
+import_data$test2s <- test2s
+
+import_data %>% names()
+```
+
+# Note: losscon data contains more WBS than train data
+
+[losscon data WBS count] = 11750
+[train data WBS count] = 10214
+[test1 data WBS count] = 1562
+[test2 data WBS count] = 1225
+
+#====================================Feature Engineering=========================================
+```{r Group by [WBS*YM]}
+
+WBS_YM_GROUP <- list()
+
+for(data in import_name_list){
+  
+  WBS_YM_GROUP[[data]] <- import_data[[data]] %>% 
+    select(WBS.要素, 計上年月, 販売伝票, 
+           利益センタ, 得意先コード, 
+           `受注売価.円貨.`, 総原価見込額, `工事原価累計.円貨.`, 
+           工事初回受注登録年月日, 工事最遅検収予定年月日,
+           BU, X2階層, X3階層) %>% 
+      
+    mutate(工事初回受注登録年月日 = ymd(工事初回受注登録年月日),
+           工事最遅検収予定年月日 = ymd(工事最遅検収予定年月日)) %>%  
+      
+    group_by(WBS.要素, 計上年月) %>% 
+      
+    summarise(受注売価 = sum(`受注売価.円貨.`, na.rm = TRUE),
+              総原価見込額 = sum(総原価見込額, na.rm = TRUE),
+              工事原価累計 = sum(`工事原価累計.円貨.`, na.rm = TRUE),
+              工事初回受注登録年月日 = min(工事初回受注登録年月日, na.rm = TRUE),
+              工事最遅検収予定年月日 = max(工事最遅検収予定年月日, na.rm = TRUE)) %>%
+      
+    mutate(計上年月日 = ymd(paste0(計上年月, "01")),
+           計上年月末 = ceiling_date(計上年月日, "month") - days(1),
+           月度 = str_sub(計上年月, 5, 6),
+           工事期間総日数 = as.integer(工事最遅検収予定年月日 - 工事初回受注登録年月日),
+           経過日数 = as.integer(計上年月末 - 工事初回受注登録年月日)) %>%
+      
+    mutate(工期進捗率 = 経過日数/工事期間総日数,
+           見込原価率 = 総原価見込額/受注売価,
+           実績原価率 = 工事原価累計/受注売価,
+           原価率進捗 = 実績原価率/工期進捗率
+    )    
+}
+
+```
+
+
+```{r filter 4Q data only & left join with losscon & add wbs_losscon labels & delete flags}
+
+WBS_YM_GROUP_4Q_LABELED <- list()
+
+for(data in import_name_list){
+
+  WBS_YM_GROUP_4Q_LABELED[[data]] <- WBS_YM_GROUP[[data]] %>% 
+    
+   # filter YM = 4Q
+    filter(str_sub(計上年月,5,6) %in% c("03", "06", "09", "12")) %>% 
+    
+    # add losscon situations (of that moment, not label variable) 
+    left_join(losscon) %>% 
+    
+    
+    
+    group_by(WBS.要素) %>% 
+    
+    # add label variable (regard the whole wbs as losscon or not)
+    mutate(ロスコン案件マーク = ifelse(max(ロスコン) == 1, 1, 0)) %>% 
+    
+    # delete flag for after-losscon records
+    mutate(delete_flag_happened = ifelse(cumsum(ロスコン) > 0, 1, 0)) %>% 
+    
+    # delete flag for result uncertained wbs (those unfinished till 201912)
+    mutate(delete_flag_unfinished = ifelse(ロスコン案件マーク == 0 & max(計上年月) == "201912", 1, 0))
+    
+}
+
+
+
+```
+
+
+```{r [WBS*YM] keep delete flag as 0 & add features}
+
+WBS_YM_GROUP_FEATURED_LABELED <- list()
+
+for(data in import_name_list){
+  
+  WBS_YM_GROUP_FEATURED_LABELED[[data]] <- WBS_YM_GROUP_4Q_LABELED[[data]] %>% 
+    
+    # filter unlosscon records
+    filter(delete_flag_happened == 0) %>% 
+    
+    # filter finished wbs
+    filter(delete_flag_unfinished == 0) %>% 
+    
+    # add features
+    mutate(row_flag = 1) %>% #wbsの総計上回数のcumsumを計算するために
+    
+    group_by(WBS.要素) %>% 　#以下はWBS単位で金額変動に関する変数を追加
+    
+    mutate(前回受注売価 = lag(受注売価),　　#前四半期の計上金額を取る
+           前回総原価見込額 = lag(総原価見込額),
+           前回工事原価累計 = lag(工事原価累計),
+                 
+           前回見込原価率 = lag(見込原価率),
+           前回実績原価率 = lag(実績原価率)
+           ) %>% 
+    
+    mutate(受注売価増減額 = ifelse(is.na(前回受注売価), 0, 受注売価 - 前回受注売価), #フラグ作り
+           受注売価変化度 = 受注売価増減額/前回受注売価,
+           受注売価変動フラグ = ifelse(受注売価増減額 != 0, 1, 0),
+           受注売価上昇フラグ = ifelse(受注売価増減額 > 0, 1, 0),
+           ) %>% 
+    
+    mutate(総原価見込額増減額 = ifelse(is.na(前回総原価見込額), 0, 総原価見込額 - 前回総原価見込額),
+           総原価見込額変化度 = 総原価見込額増減額/前回総原価見込額,
+           総原価見込額変動フラグ = ifelse(総原価見込額増減額 != 0, 1, 0),
+           総原価見込額上昇フラグ = ifelse(総原価見込額増減額 > 0, 1, 0),
+           ) %>% 
+    
+    mutate(工事原価累計増減額 = ifelse(is.na(前回工事原価累計), 0, 工事原価累計 - 前回工事原価累計),
+           工事原価累計変化度 = 工事原価累計増減額/前回工事原価累計,
+           工事原価累計変動フラグ = ifelse(工事原価累計増減額 != 0, 1, 0),
+           工事原価累計上昇フラグ = ifelse(工事原価累計増減額 > 0, 1, 0),
+           ) %>% 
+    
+    mutate(見込原価率増減額 = ifelse(is.na(前回見込原価率), 0, 見込原価率 - 前回見込原価率),
+           見込原価率変化度 = 見込原価率増減額/前回見込原価率,
+           見込原価率変動フラグ = ifelse(見込原価率増減額 != 0, 1, 0),
+           見込原価率上昇フラグ = ifelse(見込原価率増減額 > 0, 1, 0)
+           ) %>% 
+    
+    mutate(実績原価率増減額 = ifelse(is.na(前回実績原価率), 0, 実績原価率 - 前回実績原価率),
+           実績原価率変化度 = 実績原価率増減額/前回実績原価率,
+           実績原価率変動フラグ = ifelse(実績原価率増減額 != 0, 1, 0),
+           実績原価率上昇フラグ = ifelse(実績原価率増減額 > 0, 1, 0)
+           ) %>% 
+    
+    mutate(総計上回数 = cumsum(row_flag),　　# 上昇層回数と連続上昇区分ラベル作り
+           受注売価上昇総回数 = cumsum(受注売価上昇フラグ),
+           総原価見込額上昇総回数 = cumsum(総原価見込額上昇フラグ),
+           工事原価累計上昇総回数 = cumsum(工事原価累計上昇フラグ),
+           見込原価率上昇総回数 = cumsum(見込原価率上昇フラグ),
+           実績原価率上昇総回数 = cumsum(実績原価率上昇フラグ),
+           label_受注売価_up = cumsum(c(0, diff(受注売価上昇フラグ)<0)),
+           label_総原価見込額_up = cumsum(c(0, diff(総原価見込額上昇フラグ)<0)),
+           label_工事原価累計_up = cumsum(c(0, diff(工事原価累計上昇フラグ)<0)),
+           label_見込原価率_up = cumsum(c(0, diff(見込原価率上昇フラグ)<0)),
+           label_実績原価率_up = cumsum(c(0, diff(実績原価率上昇フラグ)<0))
+           ) %>% 
+    
+    group_by(WBS.要素, label_受注売価_up) %>% 　# 連続上昇回数計算（0リセット）
+    mutate(受注売価連続上昇回数 = cumsum(受注売価上昇フラグ)) %>% 
+    group_by(WBS.要素, label_総原価見込額_up) %>% 
+    mutate(総原価見込額連続上昇回数 = cumsum(総原価見込額上昇フラグ)) %>%
+    group_by(WBS.要素, label_工事原価累計_up) %>% 
+    mutate(工事原価累計連続上昇回数 = cumsum(工事原価累計上昇フラグ)) %>%
+    group_by(WBS.要素, label_見込原価率_up) %>% 
+    mutate(見込原価率連続上昇回数 = cumsum(見込原価率上昇フラグ)) %>%
+    group_by(WBS.要素, label_実績原価率_up) %>% 
+    mutate(実績原価率連続上昇回数 = cumsum(実績原価率上昇フラグ))
+  
+}
+```
+
+```{r input data cleansing}
+
+# define a name list of train(test) variables
+classification_var <- c("WBS.要素", "計上年月","受注売価", "総原価見込額", "ロスコン案件マーク", "月度", "工事期間総日数", "工期進捗率", "見込原価率", "原価率進捗", "総計上回数", "受注売価上昇総回数", "総原価見込額上昇総回数", "見込原価率上昇総回数", "受注売価連続上昇回数", "総原価見込額連続上昇回数", "見込原価率連続上昇回数")
+
+TREE_DATA_with_WBS <- list()
+
+for(data in import_name_list){
+  
+  TREE_DATA_with_WBS[[data]] <- WBS_YM_GROUP_FEATURED_LABELED[[data]][ ,classification_var] %>%
+    
+    #factorに変換
+    mutate(ロスコン案件マーク = as.factor(ロスコン案件マーク), 
+           月度 = as.factor(月度)) %>% 
+    
+    #NA処理
+    mutate(見込原価率 = ifelse(is.na(見込原価率), 0, 見込原価率), 
+           工期進捗率 = ifelse(is.na(工期進捗率), 見込原価率, 工期進捗率), 
+           見込原価率上昇総回数 = ifelse(is.na(見込原価率上昇総回数), 0, 見込原価率上昇総回数), 
+           見込原価率連続上昇回数 = ifelse(is.na(見込原価率連続上昇回数), 0, 見込原価率連続上昇回数),
+           工事期間総日数 = ifelse(is.na(工事期間総日数), mean(.$工事期間総日数, na.rm = TRUE), 工事期間総日数),
+           原価率進捗= ifelse(is.na(原価率進捗), 1, 原価率進捗)) %>%
+    
+    #工期進捗率>1の処理
+    mutate(工期進捗率 = ifelse(工期進捗率>1, 1, 工期進捗率))
+}
+
+# Get rid of WBS from features because WBS directly decide label
+TREE_DATA_remove_WBS <- list()
+for(data in import_name_list){
+  TREE_DATA_remove_WBS[[data]] <- TREE_DATA_with_WBS[[data]] %>% 
+    select(-WBS.要素) %>% 
+    select(-計上年月)
+    
+}
+
+TREE_DATA_with_WBS$train %>% write.csv("TREE_DATA_with_WBS_train.csv", na = "", fileEncoding = "UTF-8")
+TREE_DATA_with_WBS$test1 %>% write.csv("TREE_DATA_with_WBS_test1.csv", na = "", fileEncoding = "UTF-8")
+TREE_DATA_with_WBS$test1s %>% write.csv("TREE_DATA_with_WBS_test1s.csv", na = "", fileEncoding = "UTF-8")
+TREE_DATA_with_WBS$test2 %>% write.csv("TREE_DATA_with_WBS_test2.csv", na = "", fileEncoding = "UTF-8")
+TREE_DATA_with_WBS$test2s %>% write.csv("TREE_DATA_with_WBS_test2s.csv", na = "", fileEncoding = "UTF-8")
+
+?write.csv
+
+```
+#====================================Model Compare=========================================
+
+
+```{r randomly extract 1/5 from training data for validation to compare performance among models}
+# set row numbers of datasets
+NEC_train <- TREE_DATA_remove_WBS$train 
+n <- nrow(NEC_train)
+n_valid <- round(.2 * n) 
+
+# randomly extract 
+set.seed(123)
+valid_indices <- sample(1:n, n_valid)
+
+NEC_subtrain <- NEC_train[-valid_indices, ] #8/10 of NEC_train
+NEC_subvalid <- NEC_train[valid_indices, ] #2/10 of NEC_train
+
+```
+
+# algorithm comparision 
+## 1. single classification tree
+
+```{r single classification tree}
+# fitting
+single_tree_model <- rpart(formula = ロスコン案件マーク ~ ., 
+                          data = NEC_subtrain, 
+                          method = "class",
+                          xval = 20,
+                          minsplit = 20,
+                          maxcompete = 4,
+                          parms = list(split= "information")) # "information" is batter than "gini" (proved later by tuning)
+
+
+
+# plot the tree structure 
+rpart.plot(x = single_tree_model, yesno = 2, type = 1, extra = "auto")
+
+# analysis of the importance of variable
+single_tree_model$variable.importance
+
+
+# Generate predictions on the validation set using the gini model
+single_tree_pred <- predict(object = single_tree_model, 
+                           newdata = NEC_subvalid,
+                           type = "class")  
+
+single_tree_pred_prob <- predict(object = single_tree_model, 
+                                newdata = NEC_subvalid,
+                                type = "prob")
+
+# Calculate the confusion matrix for the test set
+caret::confusionMatrix(data = single_tree_pred,       
+                reference = NEC_subvalid$ロスコン案件マーク) 
+
+
+AUC_tree <- auc(actual = NEC_subvalid$ロスコン案件マーク, 
+                predicted = single_tree_pred_prob[,2])
+
+# Compute the RMSE
+rmse(actual = NEC_subvalid$ロスコン案件マーク, 
+     predicted = single_tree_pred)
+
+AUC_tree
+
+```
+
+
+```{r tuning the single tree model based on the complexity parameter}
+# Plot the "CP Table"
+plotcp(single_tree_model)
+
+# Print the "CP Table"
+print(single_tree_model$cptable)
+
+# Retrieve optimal cp value based on cross-validated error
+opt_index <- which.min(single_tree_model$cptable[, "xerror"])
+cp_opt <- single_tree_model$cptable[opt_index, "CP"]
+
+# Prune the model (to optimized cp value)
+single_tree_model_cp_optimal <- prune(tree = single_tree_model,
+                                     cp = cp_opt)
+
+# Plot the optimized model
+rpart.plot(x = single_tree_model_cp_optimal, yesno = 2, type = 1, extra = "auto")
+
+
+# Generate predictions on the validation set using the gini model
+single_tree_cp_optimal_pred <- predict(object = single_tree_model_cp_optimal, 
+                           newdata = NEC_subvalid,
+                           type = "class")  
+
+single_tree_cp_optimal_pred_prob <- predict(object = single_tree_model_cp_optimal, 
+                                newdata = NEC_subvalid,
+                                type = "prob")
+
+# Calculate the confusion matrix for the test set
+caret::confusionMatrix(data = single_tree_cp_optimal_pred,       
+                reference = NEC_subvalid$ロスコン案件マーク) 
+
+
+AUC_tree_cp_optimal <- auc(actual = NEC_subvalid$ロスコン案件マーク, 
+                           predicted = single_tree_cp_optimal_pred_prob[,2])
+
+# Compute the RMSE
+rmse(actual = NEC_subvalid$ロスコン案件マーク, 
+     predicted = single_tree_cp_optimal_pred)
+
+AUC_tree_cp_optimal
+
+# conclusion: cp_optimal model is the original model
+```
+
+```{r generate a grid of hyperparameter values with auc and rmse}
+# Establish a list of possible values for minsplit and maxdepth
+minsplit <- seq(10, 30, 10)
+# maxdepth <- seq(16, 30, 2)
+maxcompete <- c(3,4,5)
+criterion <- c("gini", "information")
+
+# Create a data frame containing all combinations 
+hyper_grid <- expand.grid(minsplit = minsplit, maxcompete = maxcompete, criterion = criterion) #expand.grid() very useful
+
+# Check out the grid
+head(hyper_grid)
+
+# Print the number of grid combinations
+nrow(hyper_grid)
+
+AUC_single_grid <- c()
+RMSE_single_grid <- c()
+
+for(i in 1:nrow(hyper_grid)){
+  model <- rpart(formula = ロスコン案件マーク ~ ., 
+                 data = NEC_subtrain, 
+                 method = "class",
+                 xval = 20,
+                 minsplit = hyper_grid$minsplit[i],
+                 maxcompete = hyper_grid$maxcompete[i],
+                 parms = list(split=hyper_grid$criterion[i]))
+  
+  pred <- predict(object = model, 
+                  newdata = NEC_subvalid,
+                  type = "class")
+  
+  prob <-predict(object = model, 
+                 newdata = NEC_subvalid,
+                 type = "prob")
+  
+  auc <- auc(actual = NEC_subvalid$ロスコン案件マーク, 
+             predicted = prob[,2])
+
+  rmse <- rmse(actual = NEC_subvalid$ロスコン案件マーク, 
+               predicted = pred)
+  
+  AUC_single_grid[i] <- auc
+  
+  RMSE_single_grid[i] <- rmse
+  
+}
+
+hyper_grid %>% cbind(AUC_single_grid) %>% cbind(RMSE_single_grid)
+
+# here the conclusion is: criterion should choose "information" rather than "gini" by default while other hyper dose not really matter.
+```
+
+
+## 2. bagged tree
+
+```{r}
+set.seed(147)
+bagged_tree_model <-  bagging(formula = ロスコン案件マーク ~ ., 
+                              data = NEC_subtrain,
+                              xval = 20,
+                              coob = TRUE)
+
+# Print the model
+print(bagged_tree_model)
+
+# see the result of the first sub-tree model
+# bagged_tree_model$mtrees[1]
+```
+
+```{r confusion matrix & auc}
+# Generate predicted classes using the model object
+bagged_tree_model_pred <- predict(object = bagged_tree_model,    
+                                  newdata = NEC_subvalid,  
+                                  type = "class")  # return classification labels
+
+# Generate predictions on the test set
+bagged_tree_model_pred_prob <- predict(object = bagged_tree_model,
+                                       newdata = NEC_subvalid,
+                                       type = "prob")
+
+# Print the predicted classes
+# print(bagged_tree_model_pred)
+
+# Calculate the confusion matrix for the test set
+caret::confusionMatrix(data = bagged_tree_model_pred,       
+                reference = NEC_subvalid$ロスコン案件マーク)
+
+
+AUC_bagged <- auc(actual = NEC_subvalid$ロスコン案件マーク, 
+                  predicted = bagged_tree_model_pred_prob[,2])
+
+AUC_bagged
+```
+
+## 3. Random Forest
+```{r}
+set.seed(258)
+random_forest_model <- randomForest(formula = ロスコン案件マーク ~ ., 
+                                    data = NEC_subtrain, 
+                                    mtry = 13, #use the best tuneRF result
+                                    na.action = NaRV.omit) 
+```
+
+```{r plot random forest}
+# Plot the model trained in the previous exercise
+plot(random_forest_model)
+
+# Add a legend since it doesn't have one by default
+legend(x = "right", 
+       legend = colnames(random_forest_model$err.rate),
+       fill = 1:ncol(random_forest_model$err.rate))
+```
+
+```{r}
+# Generate predicted classes using the model object
+random_forest_model_pred <- predict(object = random_forest_model,    
+                                    newdata = NaRV.omit(NEC_subvalid),  
+                                    type = "class") 
+
+random_forest_model_pred_prob <- predict(object = random_forest_model,
+                                         newdata = NaRV.omit(NEC_subvalid),  
+                                         type = "prob") 
+
+# Calculate the confusion matrix for the test set
+caret::confusionMatrix(data = random_forest_model_pred,       
+                reference = NaRV.omit(NEC_subvalid)$ロスコン案件マーク) 
+
+
+AUC_RF <- auc(actual = NaRV.omit(NEC_subvalid)$ロスコン案件マーク, 
+              predicted = random_forest_model_pred_prob[,2])
+```
+
+## 4. Gradient Boosting
+```{r}
+set.seed(369)
+
+# randomforest require y must by numeric
+NEC_subtrain_GB <- NEC_subtrain %>% mutate(ロスコン案件マーク = ifelse(ロスコン案件マーク == "1", 1, 0))
+NEC_subvalid_GB <- NEC_subvalid %>% mutate(ロスコン案件マーク = ifelse(ロスコン案件マーク == "1", 1, 0))
+
+gradient_boosting_model <- gbm(formula = ロスコン案件マーク ~ ., 
+                               distribution = "bernoulli", 
+                               data = NEC_subtrain_GB,
+                               n.trees = 1000,
+                               cv.folds = 5)
+
+
+summary(gradient_boosting_model)
+```
+
+```{r auc}
+# Generate predictions on the test set 
+gradient_boosting_model_pred <- predict(object = gradient_boosting_model, 
+                                        newdata = NEC_subvalid_GB,
+                                        n.trees = 1000)
+
+# Generate predictions on the test set (scale to response)
+gradient_boosting_model_pred_res <- predict(object = gradient_boosting_model, 
+                                            newdata = NEC_subvalid_GB,
+                                            n.trees = 1000,
+                                            type = "response")
+
+# NOTE: gradient_boosting_model_pred_res == logit(gradient_boosting_model_pred)
+
+
+AUC_GB <- auc(actual = NEC_subvalid_GB$ロスコン案件マーク, predicted = gradient_boosting_model_pred_res)
+```
+
+```{r tuning}
+
+
+# Train a CV GBM model
+set.seed(963)
+gradient_boosting_model_cv <- gbm(formula = ロスコン案件マーク ~ ., 
+                                  distribution = "bernoulli", 
+                                  data = NEC_subtrain_GB,
+                                  n.trees = 1000,
+                                  cv.folds = 5)
+
+# Optimal ntree estimate based on CV
+ntree_opt_cv <- gbm.perf(object = gradient_boosting_model_cv, 
+                         method = "cv")
+# conclusion: the more n.trees, the better
+
+
+# Optimal tree numbers accroding to OOB
+ntree_opt_oob <- gbm.perf(object = gradient_boosting_model, 
+                          method = "OOB", 
+                          oobag.curve = TRUE)
+# conclusion：near 100 is best(OOB generally underestimates the optimal number of iterations)
+```
+
+## comparision of above 4 models
+
+```{r AUC compare}
+# List of predictions
+preds_list <- list(single_tree_pred_prob[,2], 
+                   bagged_tree_model_pred_prob[,2],
+                   random_forest_model_pred_prob[,2],
+                   gradient_boosting_model_pred_res)
+
+# List of actual values(here use interger label)
+actuals_list <- list(NEC_subvalid_GB$ロスコン案件マーク,
+                    NEC_subvalid_GB$ロスコン案件マーク,
+                    NaRV.omit(NEC_subvalid_GB)$ロスコン案件マーク,
+                    NEC_subvalid_GB$ロスコン案件マーク)
+
+# Plot the ROC curves
+pred <- prediction(preds_list, actuals_list)
+rocs <- performance(pred, "tpr", "fpr")
+plot(rocs, col = as.list(1:m), main = "Test Set ROC Curves")
+legend(x = "bottomright", 
+       legend = c(paste("single tree AUC:", round(AUC_tree,3)), 
+                  paste("bagged trees AUC", round(AUC_bagged,3)), 
+                  paste("random forest AUC", round(AUC_RF,3)), 
+                  paste("gradient boosting AUC", round(AUC_GB,3))),
+       fill = 1:4)
+
+
+
+# These shows Random Forest and Bagged Tree has better performance
+```
+
+
+
+#=============================================Model1: Bagged Tree====================================================
+
+```{r test set}
+test_list <- c("test1", "test1s", "test2", "test2s")
+
+TEST_SET <- TREE_DATA_remove_WBS[-1]
+```
+
+
+```{r Model1}
+set.seed(147)
+Model_BT <-  bagging(formula = ロスコン案件マーク ~ ., 
+                              data = NEC_train,
+                              xval = 20,
+                              coob = TRUE)
+
+
+Model_BT_prob <- c() # vector of BT model socre
+for(test in test_list){
+  # calculate losscon score(probability) based on Bagged Tree Model
+  Model_BT_prob[[test]] <- predict(object = Model_BT,
+                                   newdata = TEST_SET[[test]],
+                                   type = "prob")
+}
+
+
+TEST_4Q_BT_SCORE <- list() # list of test 4q socre table
+for(test in test_list){
+  TEST_4Q_BT_SCORE[[test]] <- TREE_DATA_with_WBS[[test]] %>% 
+    cbind(BT_score = Model_BT_prob[[test]][,2]) %>% 
+    mutate(rank_base = 1) %>% 
+    group_by(計上年月) %>% 
+    arrange(desc(BT_score)) %>% 
+    mutate(BT_rank = cumsum(rank_base)) %>% 
+    ungroup(計上年月) %>% 
+    arrange(WBS.要素, 計上年月)
+}
+
+
+filter_YM <- c(test1 = 201812, test1s = 201812, test2 = 201903, test2s = 201903)
+WBS_BT_SCORE <- list()
+for(test in test_list){
+  WBS_BT_SCORE[[test]] <- TEST_4Q_BT_SCORE[[test]] %>% 
+    filter(計上年月 == filter_YM[[test]]) %>% 
+    select(WBS.要素, BT_score, BT_rank) %>% 
+    arrange(BT_rank)
+}
+
+```
+
+
+#=============================================Model2: Random Forest====================================================
+
+```{r Model2}
+set.seed(258)
+Model_RF <- randomForest(formula = ロスコン案件マーク ~ ., 
+                                    data = NEC_train, 
+                                    mtry = 13, #use the best tuneRF result  
+                                    na.action = NaRV.omit)
+
+Model_RF_prob <- c() # vector of RF model socre
+for(test in test_list){
+  # calculate losscon score(probability) based on Random Forest Model
+  Model_RF_prob[[test]] <- predict(object = Model_RF,
+                                   newdata = TEST_SET[[test]] %>% NaRV.omit(),
+                                   type = "prob")
+}
+
+# Note: because Random Forest cannot deal with NA or Inf data, so one same record each has beeen removed from test set as follow:
+# A1402-01084-002	 201403
+# which, howerer, would not influence the final results
+
+TEST_4Q_RF_SCORE <- list() # list of test 4q socre table
+for(test in test_list){
+  TEST_4Q_RF_SCORE[[test]] <- TREE_DATA_with_WBS[[test]] %>%
+    NaRV.omit() %>% 
+    cbind(RF_score = Model_RF_prob[[test]][,2]) %>% 
+    mutate(rank_base = 1) %>% 
+    group_by(計上年月) %>% 
+    arrange(desc(RF_score)) %>% 
+    mutate(RF_rank = cumsum(rank_base)) %>% 
+    ungroup(計上年月) %>% 
+    arrange(WBS.要素, 計上年月)
+}
+
+
+filter_YM <- c(test1 = 201812, test1s = 201812, test2 = 201903, test2s = 201903)
+WBS_RF_SCORE <- list()
+for(test in test_list){
+  WBS_RF_SCORE[[test]] <- TEST_4Q_RF_SCORE[[test]] %>% 
+    filter(計上年月 == filter_YM[[test]]) %>% 
+    select(WBS.要素, RF_score, RF_rank) %>% 
+    arrange(RF_rank)
+}
+
+
+```
+
+
+#=============================================Model3: Gradient Boosting====================================================
+
+```{r Model3}
+set.seed(369)
+Model_GB <-  gbm(formula = ロスコン案件マーク ~ ., 
+                               distribution = "bernoulli", 
+                               data = NEC_train %>% mutate(ロスコン案件マーク = ifelse(ロスコン案件マーク == "1", 1, 0)),
+                               n.trees = 5000,
+                               cv.folds = 10)
+
+Model_GB_prob <- c() # vector of GB model socre
+for(test in test_list){
+  # calculate losscon score(probability) based on Gradient Boosting Model
+  Model_GB_prob[[test]] <- predict(object = Model_GB,
+                                   newdata = TEST_SET[[test]] %>% mutate(ロスコン案件マーク = ifelse(ロスコン案件マーク == "1", 1, 0)),
+                                   n.trees = 1000,
+                                   type = "response")
+}
+
+
+TEST_4Q_GB_SCORE <- list() # list of test 4q socre table
+for(test in test_list){
+  TEST_4Q_GB_SCORE[[test]] <- TREE_DATA_with_WBS[[test]] %>%
+    # NaRV.omit() %>% 
+    cbind(GB_score = Model_GB_prob[[test]]) %>% 
+    mutate(rank_base = 1) %>% 
+    group_by(計上年月) %>% 
+    arrange(desc(GB_score)) %>% 
+    mutate(GB_rank = cumsum(rank_base)) %>% 
+    ungroup(計上年月) %>% 
+    arrange(WBS.要素, 計上年月)
+}
+
+
+filter_YM <- c(test1 = 201812, test1s = 201812, test2 = 201903, test2s = 201903)
+WBS_GB_SCORE <- list()
+for(test in test_list){
+  WBS_GB_SCORE[[test]] <- TEST_4Q_GB_SCORE[[test]] %>% 
+    filter(計上年月 == filter_YM[[test]]) %>% 
+    select(WBS.要素, GB_score, GB_rank) %>% 
+    arrange(GB_rank)
+}
+
+
+```
+
+
+#==============================================results output===============================================
+
+
+
+```{r merge three models' socre and rank together }
+WBS_BT_RF_GB_SCORE <- c()
+for(test in test_list){
+  WBS_BT_RF_GB_SCORE[[test]] <- WBS_BT_SCORE[[test]] %>% 
+    left_join(WBS_RF_SCORE[[test]]) %>% 
+    left_join(WBS_GB_SCORE[[test]])
+}
+```
+
+```{r}
+WBS_BT_RF_GB_SCORE
+```
+
+```{r write xlsx}
+# for RM model
+WBS_RF_SCORE_xlsx <- createWorkbook()
+
+for(test in test_list){
+  addWorksheet(WBS_RF_SCORE_xlsx, test)
+  writeData(WBS_RF_SCORE_xlsx, sheet = test, x = WBS_RF_SCORE[[test]])
+}
+
+saveWorkbook(WBS_RF_SCORE_xlsx, "./002_LossCon/output/Random Forest Models' Score and Rank.xlsx")
+
+
+# for GB model
+WBS_GB_SCORE_xlsx <- createWorkbook()
+
+for(test in test_list){
+  addWorksheet(WBS_GB_SCORE_xlsx, test)
+  writeData(WBS_GB_SCORE_xlsx, sheet = test, x = WBS_GB_SCORE[[test]])
+}
+
+saveWorkbook(WBS_GB_SCORE_xlsx, "./002_LossCon/output/Gradient Boosting Models' Score and Rank.xlsx")
+```
+
