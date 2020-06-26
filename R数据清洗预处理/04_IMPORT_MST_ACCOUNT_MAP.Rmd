@@ -1,0 +1,185 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(magrittr)
+```
+
+```{r}
+list.files(path = "./A1_Raw_Data", pattern = NULL, all.files = FALSE,
+           full.names = FALSE, recursive = FALSE,
+           ignore.case = FALSE, include.dirs = FALSE, no.. = FALSE)
+```
+
+# MST_ACCOUNT_MAP
+```{r}
+MST_ACCOUNT_MAP_INPUT <- read_excel("./A1_Raw_Data/住友商事DandAダウンロード科目.xlsx", 
+                                 sheet = 1, 
+                                 range = "A10:L725",
+                                 col_names = TRUE)
+
+# create a edited version
+MST_ACCOUNT_MAP_EDIT <- MST_ACCOUNT_MAP_INPUT %>% 
+  rename(Account_X = 重要科目,
+         Account_Code = 精算表科目,
+         Account_Name = `...3`, 
+         Account_Code_09 = `09画面科目`) %>%
+  mutate(Account_X = ifelse(Account_Code %in% c('6005X' , '6002X', '6003X'), "X", Account_X),
+         Account_Name = str_sub(Account_Name, 2))
+```
+
+
+## NAME
+```{r}
+# NAME
+MST_ACCOUNT_NAME_OUTPUT <- MST_ACCOUNT_MAP_EDIT %>%  
+  select(Account_X, Account_Code, Account_Name) %>% 
+  arrange(Account_Code)
+
+write_tsv(MST_ACCOUNT_NAME_OUTPUT, "04_MST_ACCOUNT_NAME.tsv")
+```
+
+
+## OVERWRITE
+```{r}
+# OVERWRITE
+MST_ACCOUNT_OVERWRITE_OUTPUT <- MST_ACCOUNT_MAP_EDIT %>%
+  select(Account_Code, Account_Name, Account_Code_09) %>% 
+  filter(!is.na(Account_Code_09))
+
+write_tsv(MST_ACCOUNT_OVERWRITE_OUTPUT, "04_MST_ACCOUNT_OVERWRITE.tsv")
+```
+
+
+## FORSUM
+```{r}
+# FORSUM
+
+## エラーcell修正（余計なコードを入ってる：EXCEL sheet$G103, L700 = > NA)
+MST_ACCOUNT_MAP_EDIT[93, "合計勘定2"] = NA
+MST_ACCOUNT_MAP_EDIT[690, "合計勘定7"] = NA
+
+## create a SUM_ACCOUNT_NAME master
+master_SUM_ACCOUNT_NAME <- MST_ACCOUNT_MAP_EDIT %>% 
+  filter(is.na(合計勘定1), 
+         is.na(合計勘定2),
+         is.na(合計勘定3),
+         is.na(合計勘定4),
+         is.na(合計勘定5),
+         is.na(合計勘定6),
+         is.na(合計勘定7)) %>% 
+  select(Account_Code, Account_Name) %>% 
+  rename(合計勘定 = Account_Code,
+         Sum_Account_Name = Account_Name)
+```
+
+
+```{r}
+## create 7 subset only where 合計勘定1~7 is not NA separately
+MST_ACCOUNT_MAP_SUM1 <- MST_ACCOUNT_MAP_EDIT %>% 
+  select(Account_Code_09, Account_Name, 合計勘定1) %>% 
+  filter(!is.na(合計勘定1))
+
+MST_ACCOUNT_MAP_SUM2 <- MST_ACCOUNT_MAP_EDIT %>% 
+  select(Account_Code_09, Account_Name, 合計勘定2) %>% 
+  filter(!is.na(合計勘定2))
+
+MST_ACCOUNT_MAP_SUM3 <- MST_ACCOUNT_MAP_EDIT %>% 
+  select(Account_Code_09, Account_Name, 合計勘定3) %>% 
+  filter(!is.na(合計勘定3))
+
+MST_ACCOUNT_MAP_SUM4 <- MST_ACCOUNT_MAP_EDIT %>% 
+  select(Account_Code_09, Account_Name, 合計勘定4) %>% 
+  filter(!is.na(合計勘定4))
+
+MST_ACCOUNT_MAP_SUM5 <- MST_ACCOUNT_MAP_EDIT %>% 
+  select(Account_Code_09, Account_Name, 合計勘定5) %>% 
+  filter(!is.na(合計勘定5))
+
+MST_ACCOUNT_MAP_SUM6 <- MST_ACCOUNT_MAP_EDIT %>% 
+  select(Account_Code_09, Account_Name, 合計勘定6) %>% 
+  filter(!is.na(合計勘定6))
+
+MST_ACCOUNT_MAP_SUM7 <- MST_ACCOUNT_MAP_EDIT %>% 
+  select(Account_Code_09, Account_Name, 合計勘定7) %>% 
+  filter(!is.na(合計勘定7))
+```
+
+
+```{r}
+## join the 7 subsets with SUM_ACCOUNT_NAME master separately
+MST_ACCOUNT_MAP_SUM_ACCOUNT1 <- MST_ACCOUNT_MAP_SUM1 %>% 
+  left_join(master_SUM_ACCOUNT_NAME, by = c("合計勘定1" = "合計勘定")) %>% 
+  rename(合計勘定 = 合計勘定1)
+
+MST_ACCOUNT_MAP_SUM_ACCOUNT2 <- MST_ACCOUNT_MAP_SUM2 %>% 
+  left_join(master_SUM_ACCOUNT_NAME, by = c("合計勘定2" = "合計勘定")) %>% 
+  rename(合計勘定 = 合計勘定2)
+
+MST_ACCOUNT_MAP_SUM_ACCOUNT3 <- MST_ACCOUNT_MAP_SUM3 %>% 
+  left_join(master_SUM_ACCOUNT_NAME, by = c("合計勘定3" = "合計勘定")) %>% 
+  rename(合計勘定 = 合計勘定3)
+
+MST_ACCOUNT_MAP_SUM_ACCOUNT4 <- MST_ACCOUNT_MAP_SUM4 %>% 
+  left_join(master_SUM_ACCOUNT_NAME, by = c("合計勘定4" = "合計勘定")) %>% 
+  rename(合計勘定 = 合計勘定4)
+
+MST_ACCOUNT_MAP_SUM_ACCOUNT5 <- MST_ACCOUNT_MAP_SUM5 %>% 
+  left_join(master_SUM_ACCOUNT_NAME, by = c("合計勘定5" = "合計勘定")) %>% 
+  rename(合計勘定 = 合計勘定5)
+
+MST_ACCOUNT_MAP_SUM_ACCOUNT6 <- MST_ACCOUNT_MAP_SUM6 %>% 
+  left_join(master_SUM_ACCOUNT_NAME, by = c("合計勘定6" = "合計勘定")) %>% 
+  rename(合計勘定 = 合計勘定6)
+
+MST_ACCOUNT_MAP_SUM_ACCOUNT7 <- MST_ACCOUNT_MAP_SUM7 %>% 
+  left_join(master_SUM_ACCOUNT_NAME, by = c("合計勘定7" = "合計勘定")) %>% 
+  rename(合計勘定 = 合計勘定7)
+
+
+## union the above 7 tables into one
+MST_ACCOUNT_FORSUM_OUTPUT <- MST_ACCOUNT_MAP_SUM_ACCOUNT1 %>% 
+  union_all(MST_ACCOUNT_MAP_SUM_ACCOUNT2) %>% 
+  union_all(MST_ACCOUNT_MAP_SUM_ACCOUNT3) %>% 
+  union_all(MST_ACCOUNT_MAP_SUM_ACCOUNT4) %>% 
+  union_all(MST_ACCOUNT_MAP_SUM_ACCOUNT5) %>% 
+  union_all(MST_ACCOUNT_MAP_SUM_ACCOUNT6) %>% 
+  union_all(MST_ACCOUNT_MAP_SUM_ACCOUNT7) %>% 
+  filter(!is.na(Account_Code_09)) %>% 
+  rename(Account_Name_09 = Account_Name,
+         Sum_Account_Code = 合計勘定)
+
+write_tsv(MST_ACCOUNT_FORSUM_OUTPUT, "04_MST_ACCOUNT_FORSUM.tsv")
+```
+
+
+<!-- ====================test===================== -->
+```{r}
+write_csv(MST_ACCOUNT_FORSUM_OUTPUT, file('04_MST_ACCOUNT_FORSUM.csv',encoding="UTF-8"))
+```
+
+```{r}
+MST_ACCOUNT_FORSUM_2019 <- read_excel("./old/04_MST_ACCOUNT_FORSUM_2019.xlsx", 
+                                 sheet = 1, 
+                                 col_names = TRUE)
+
+```
+
+```{r}
+MST_ACCOUNT_FORSUM_2019
+
+MST_ACCOUNT_FORSUM_OUTPUT %>% arrange(Account_Code_09)
+```
+
+
+
+
+
+
+
+

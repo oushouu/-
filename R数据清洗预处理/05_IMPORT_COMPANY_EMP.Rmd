@@ -1,0 +1,138 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(magrittr)
+```
+
+```{r}
+list.files(path = "./A1_Raw_Data", pattern = NULL, all.files = FALSE,
+           full.names = FALSE, recursive = FALSE,
+           ignore.case = FALSE, include.dirs = FALSE, no.. = FALSE)
+```
+
+```{r}
+INPUT_DATA_LIST %>% 
+  filter(Program == "Import_Company_Info")
+
+```
+
+
+#COMPANY_EMP
+```{r 1503}
+# 1503のデータを取る
+COMPANY_EMP_1503_INPUT <- read_excel("./A1_Raw_Data/【追加】従業員数201503-201803.xlsx", 
+                                 sheet = "1503", 
+                                 range = "E11:Z299",
+                                 col_names = TRUE)
+
+COMPANY_EMP_1503_OUTPUT <- COMPANY_EMP_1503_INPUT %>% 
+  select(会社コード, 
+         `従業員数 - 当期末`, 
+         `従業員数 - 前会計年度末`, 
+         `従業員数 - 増減`,
+         `臨時従業員数 - 当期末`,
+         `臨時従業員数 - 前会計年度末`,
+         `臨時従業員数 - 増減`) %>% 
+  rename(Company_Code = 会社コード) %>% 
+  mutate(YM = "201503") %>% 
+  select(YM, everything())
+```
+
+```{r 1603}
+# 1603のデータを取る
+COMPANY_EMP_1603_INPUT <- read_excel("./A1_Raw_Data/【追加】従業員数201503-201803.xlsx", 
+                                 sheet = "1603", 
+                                 range = "E11:Z281",
+                                 col_names = TRUE)
+
+COMPANY_EMP_1603_OUTPUT <- COMPANY_EMP_1603_INPUT %>% 
+  select(会社コード, 
+         `従業員数 - 当期末`, 
+         `従業員数 - 前会計年度末`, 
+         `従業員数 - 増減`,
+         `臨時従業員数 - 当期末`,
+         `臨時従業員数 - 前会計年度末`,
+         `臨時従業員数 - 増減`) %>% 
+  rename(Company_Code = 会社コード) %>% 
+  mutate(YM = "201603") %>% 
+  select(YM, everything())
+```
+
+```{r 1703}
+# 1703のデータを取る
+COMPANY_EMP_1703_INPUT <- read_excel("./A1_Raw_Data/【追加】従業員数201503-201803.xlsx", 
+                                 sheet = "1703", 
+                                 range = "E11:Z274",
+                                 col_names = TRUE)
+
+COMPANY_EMP_1703_OUTPUT <- COMPANY_EMP_1703_INPUT %>% 
+  select(会社コード, 
+         `従業員数 - 当期末`, 
+         `従業員数 - 前会計年度末`, 
+         `従業員数 - 増減`,
+         `臨時従業員数 - 当期末`,
+         `臨時従業員数 - 前会計年度末`,
+         `臨時従業員数 - 増減`) %>% 
+  rename(Company_Code = 会社コード) %>% 
+  mutate(YM = "201703") %>% 
+  select(YM, everything())
+```
+
+```{r 1803}
+# 1803のデータを取る
+COMPANY_EMP_1803_INPUT <- read_excel("./A1_Raw_Data/【追加】従業員数201503-201803.xlsx", 
+                                 sheet = "1803", 
+                                 range = "E11:Z252",
+                                 col_names = TRUE)
+
+COMPANY_EMP_1803_OUTPUT <- COMPANY_EMP_1803_INPUT %>% 
+  select(会社コード, 
+         `従業員数 - 当期末`, 
+         `従業員数 - 前会計年度末`, 
+         `従業員数 - 増減`,
+         `臨時従業員数 - 当期末`,
+         `臨時従業員数 - 前会計年度末`,
+         `臨時従業員数 - 増減`) %>% 
+  rename(Company_Code = 会社コード) %>% 
+  mutate(YM = "201803") %>% 
+  select(YM, everything())
+```
+
+```{r 1903}
+# 1903のデータを取る
+COMPANY_EMP_1903_INPUT <- read_excel("./A1_Raw_Data/従業員数201903.xlsx", 
+                                 sheet = 1, 
+                                 range = "E11:V263",
+                                 col_names = TRUE)
+
+COMPANY_EMP_1903_OUTPUT <- COMPANY_EMP_1903_INPUT %>% 
+  select(会社コード, 
+         `従業員数 - 当期末`, 
+         `従業員数 - 前会計年度末`, 
+         `従業員数 - 増減`,
+         `臨時従業員数 - 当期末`,
+         `臨時従業員数 - 前会計年度末`,
+         `臨時従業員数 - 増減`) %>% 
+  rename(Company_Code = 会社コード) %>% 
+  mutate(YM = "201903") %>% 
+  select(YM, everything())
+
+```
+
+```{r}
+COMPANY_EMP_OUTPUT <- COMPANY_EMP_1503_OUTPUT %>% 
+  union_all(COMPANY_EMP_1603_OUTPUT) %>% 
+  union_all(COMPANY_EMP_1703_OUTPUT) %>%
+  union_all(COMPANY_EMP_1803_OUTPUT) %>%
+  union_all(COMPANY_EMP_1903_OUTPUT)
+
+write_tsv(COMPANY_EMP_OUTPUT, "05_COMPANY_EMP.tsv")
+```
+
+

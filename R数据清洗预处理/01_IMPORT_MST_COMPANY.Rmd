@@ -1,0 +1,43 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(magrittr)
+```
+
+```{r}
+list.files(path = "./A1_Raw_Data", pattern = NULL, all.files = FALSE,
+           full.names = FALSE, recursive = FALSE,
+           ignore.case = FALSE, include.dirs = FALSE, no.. = FALSE)
+```
+
+# INPUT_DATA_LIST
+```{r}
+INPUT_DATA_LIST <- read_excel("./A1_Raw_Data/_Input_Data_List_ 20200120.xlsx", 
+                                 sheet = 1, 
+                                 range = "A1:H49",
+                                 col_names = TRUE)
+
+```
+
+
+# MST_COMPANY
+```{r}
+MST_COMPANY_INPUT <- read_excel("./A1_Raw_Data/1903関係会社一覧表Final.xlsx", sheet = 1)
+
+MST_COMPANY_OUTPUT <- MST_COMPANY_INPUT %>% 
+  mutate(Company_Code = 会社ｺｰﾄﾞ,
+         Company_Name = 正式名称,
+         Country = 国名,
+         主管部コード4桁 = str_sub(主管部ｺｰﾄﾞ, 1, 4)) %>% 
+  select(Company_Code, Company_Name, Country, 主管部コード4桁, everything())
+
+write_tsv(MST_COMPANY_OUTPUT, "01_MST_COMPANY.tsv")
+```
+
+
+

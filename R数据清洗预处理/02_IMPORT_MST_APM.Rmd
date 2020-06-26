@@ -1,0 +1,33 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(magrittr)
+```
+
+```{r}
+list.files(path = "./A1_Raw_Data", pattern = NULL, all.files = FALSE,
+           full.names = FALSE, recursive = FALSE,
+           ignore.case = FALSE, include.dirs = FALSE, no.. = FALSE)
+```
+
+
+# MST_APM
+```{r}
+MST_APM_INPUT <- read_excel("./A1_Raw_Data/APM会社一覧 D&A用加工済.xlsx", 
+                                 sheet = 1, 
+                                 range = "A12:F43",
+                                 col_names = FALSE)
+
+MST_APM_OUTPUT <- MST_APM_INPUT %>%
+  rename(Company_Code = `...1`,
+         APM_IFRS = `...6`) %>% 
+  filter(!is.na(Company_Code)) %>% 
+  select(Company_Code, APM_IFRS)
+ 
+write_tsv(MST_APM_OUTPUT, "02_MST_APM.tsv")
+```

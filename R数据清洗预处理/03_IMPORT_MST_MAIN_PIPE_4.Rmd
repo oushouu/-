@@ -1,0 +1,32 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(magrittr)
+```
+
+```{r}
+list.files(path = "./A1_Raw_Data", pattern = NULL, all.files = FALSE,
+           full.names = FALSE, recursive = FALSE,
+           ignore.case = FALSE, include.dirs = FALSE, no.. = FALSE)
+```
+
+# MST_MAIN_PIPE_4
+```{r}
+# 2020年1月21日修正：「マスタ_主管部コード4桁_20200120.xlsx」＝＞「マスタ_主管部コード4桁_20200120.xlsx」
+MST_MAIN_PIPE_4_INPUT <- read_excel("./A1_Raw_Data/マスタ_主管部コード4桁_20200120.xlsx", 
+                                 sheet = 1, 
+                                 range = "D2:E16",
+                                 col_names = TRUE)
+
+MST_MAIN_PIPE_4_OUTPUT <- MST_MAIN_PIPE_4_INPUT %>% 
+  mutate(主管部コード4桁 = str_sub(主管部コード4桁, 2))
+         #主管部コード4桁_名称 = str_sub(主管部コード4桁_名称, 2)
+
+write_tsv(MST_MAIN_PIPE_4_OUTPUT, "03_MST_MAIN_PIPE_4.tsv")
+```

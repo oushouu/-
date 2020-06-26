@@ -1,0 +1,217 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(magrittr)
+```
+
+```{r}
+list.files(path = "./A1_Raw_Data", pattern = NULL, all.files = FALSE,
+           full.names = FALSE, recursive = FALSE,
+           ignore.case = FALSE, include.dirs = FALSE, no.. = FALSE)
+```
+
+```{r}
+# create 06 parameters table
+para_table_06 <- INPUT_DATA_LIST %>% 
+  filter(Program == "Import_Consoli") %>% 
+  mutate(YM = str_sub(ファイル名, 7, 12),
+         part = str_sub(ファイル名, 13, 13),
+         tibble_name = ifelse(part == "①", paste0(YM, "_1"), paste0(YM, "_2")),
+         path = paste0("./A1_Raw_Data/", ファイル名)) %>% 
+  select(-c(NO, シート名, レコード数))
+
+```
+
+
+```{r}
+para_table_06
+```
+
+```{r}
+# import 10 csv file in specific range(delete first 8 rows and last blank column) into one list
+CONSOLI_INPUT_LIST <- list()
+for(index in pull(para_table_06[, "SNO"])){
+  CONSOLI_INPUT_LIST[[pull(para_table_06[index, "tibble_name"])]] <- 
+    read.csv(file = pull(para_table_06[index, "path"]) , 
+    skip = 8, header = FALSE) %>% 
+    select(1:as.numeric(para_table_06[index, "範囲"]))  #remove last NA column
+}
+
+```
+
+```{r}
+# add row_index and delete 単純合算' or '連結修正' or '連結金額'
+CONSOLI_EDIT1_LIST <- list()
+for(index in pull(para_table_06[, "SNO"])){
+  if(index %in% c(1,3,5,7,9)){ 
+    CONSOLI_EDIT1_LIST[[pull(para_table_06[index, "tibble_name"])]] <- 
+      CONSOLI_INPUT_LIST[[index]] %>% 
+      mutate(row_index = seq(9, nrow(.)+8, 1)) %>% 
+      select(-c(V3,V4,V5)) %>% 
+      select(row_index, everything())
+  } else {
+    CONSOLI_EDIT1_LIST[[pull(para_table_06[index, "tibble_name"])]] <- 
+      CONSOLI_INPUT_LIST[[index]] %>% 
+      mutate(row_index = seq(9, nrow(.)+8, 1)) %>% 
+      select(row_index, everything())
+  }
+}
+```
+
+
+```{r}
+# ACCOUNTの部分を取る
+CONSOLI_ACCOUNT_LIST <- list()
+for(index in pull(para_table_06[, "SNO"])){
+  CONSOLI_ACCOUNT_LIST[[pull(para_table_06[index, "tibble_name"])]] <- 
+    CONSOLI_EDIT1_LIST[[index]] %>% 
+      select(row_index, V1, V2) %>% 
+      rename(Account_Code = V1,
+             Account_Name  = V2) %>% 
+      filter(!row_index %in% c(9,10)) %>% 
+      mutate(Account_Code = str_sub(Account_Code, 2), #文字先頭の「'」を削除
+             Account_Name = str_sub(Account_Name, 2))
+}
+```
+
+
+```{r}
+# COMPANYの部分を取る
+CONSOLI_COMPANY_LIST <- list()
+for(index in pull(para_table_06[, "SNO"])){
+  CONSOLI_COMPANY_LIST[[pull(para_table_06[index, "tibble_name"])]] <- 
+    CONSOLI_EDIT1_LIST[[index]] %>% 
+      select(-c(V1,V2)) %>% 
+      select(row_index, everything()) %>%
+      filter(row_index %in% c(9,10)) %>% 
+      rownames_to_column() %>%         # transpose step1
+      gather(var, value, -rowname) %>% # transpose step2
+      spread(rowname, value) %>%       # transpose step3
+      filter(var != "row_index") %>%       # remove unnecessary row
+      mutate(col_index = as.integer(str_sub(var,2)),
+             Company_Code = str_sub(`1`, 2),
+             Company_Name = str_sub(`2`, 2)) %>% 
+      arrange(col_index) %>% 
+      select(col_index,
+             Company_Code,
+             Company_Name)
+}
+```
+
+
+```{r}
+# VALUEの部分を取る
+CONSOLI_VALUE_LIST <- list()
+for(index in pull(para_table_06[, "SNO"])){
+  CONSOLI_VALUE_LIST[[pull(para_table_06[index, "tibble_name"])]] <- 
+    CONSOLI_EDIT1_LIST[[index]] %>%
+      select(-c(V1,V2)) %>%
+      filter(!row_index %in% c(9,10)) %>%
+      gather(var, value, -row_index) %>% 
+      mutate(var = as.integer(str_sub(var,2))) %>%
+      rename(col_index = var,
+             val = value)
+}
+```
+
+```{r}
+# JOIN three parts(ACCOUNT, COMPANY and VALUE)
+CONSOLI_THREE_JOIN_LIST <- list()
+for(index in pull(para_table_06[, "SNO"])){
+  CONSOLI_THREE_JOIN_LIST[[pull(para_table_06[index, "tibble_name"])]] <- 
+    CONSOLI_VALUE_LIST[[index]] %>%
+      left_join(CONSOLI_COMPANY_LIST[[index]], by = "col_index") %>% 
+      left_join(CONSOLI_ACCOUNT_LIST[[index]], by = "row_index") %>% 
+      mutate(YM = pull(para_table_06[index, "YM"]),
+             Flg_PLorBS = ifelse(str_sub(Account_Code,1,1) %in% seq(1,5,1), "BS", "PL"),
+             val = as.numeric(val)) %>% 
+      select(YM, Company_Code, Company_Name, Account_Code, Account_Name, val, Flg_PLorBS)
+}
+```
+
+
+```{r}
+CONSOLI_OUTPUT <- do.call(rbind, CONSOLI_THREE_JOIN_LIST)
+write_tsv(CONSOLI_OUTPUT, "06_CONSOLI.tsv") 
+```
+
+
+
+#=========================test====================================
+
+```{r}
+old_CONSOLI <- read_excel("./old/06_CONSOLI.xlsx")
+```
+
+```{r}
+# SASで抽出consoliデータ行数と比べ：一致
+old_CONSOLI %>% nrow()
+
+CONSOLI_OUTPUT %>% 
+  filter(YM != "201903") %>% nrow()
+```
+
+
+
+```{r}
+CONSOLI_THREE_JOIN_LIST[[1]]
+CONSOLI_OUTPUT %>% head() 
+```
+
+
+
+```{r}
+CONSOLI_EDIT1_LIST[[1]] %>% 
+  select(-c(V1,V2)) %>%
+  filter(!row_index %in% c(9,10)) %>%
+  gather(var, value, -row_index) %>% 
+  mutate(var = as.integer(str_sub(var,2))) %>%
+  rename(col_index = var,
+         val = value) %>% 
+
+```
+
+
+
+```{r}
+CONSOLI_EDIT1_LIST[[1]] %>% 
+      select(-c(V1,V2)) %>% 
+      select(row_index, everything()) %>%
+      filter(row_index %in% c(9,10)) %>% 
+      rownames_to_column() %>%         # transpose step1
+      gather(var, value, -rowname) %>% # transpose step2
+      spread(rowname, value) %>%       # transpose step3
+      filter(var != "row_index") %>%       # remove unnecessary row
+      mutate(col_index = as.integer(str_sub(var,2)),
+             Company_Code = str_sub(`1`, 2),
+             Company_Name = str_sub(`2`, 2)) %>% 
+      arrange(col_index) %>% 
+      select(col_index,
+             Company_Code,
+             Company_Name)
+
+```
+
+
+```{r}
+for(e in CONSOLI_THREE_JOIN_LIST){
+  print(e)
+}
+```
+
+
+```{r}
+para_table_06
+```
+
+
+
+
+
+

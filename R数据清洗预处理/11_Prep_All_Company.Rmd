@@ -1,0 +1,349 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(magrittr)
+```
+
+```{r}
+# input data
+CONSOLI_OUTPUT
+SUB_CONSOLI_CALCULATED_OUTPUT
+SUB_CONSOLI_ADD_OUTPUT
+DUP_CONSOLI_SUB_OUTPUT
+ALIVE_LIST_OUTPUT
+MST_COMPANY_OUTPUT
+MST_APM_OUTPUT
+MST_MAIN_PIPE_4_OUTPUT
+```
+
+
+```{r}
+# 1.【Consoli】【Sub_Consoli_Calculated】【Sub_Consoli_Add】をUNION
+ALL_COMPANY_STEP1 <- mutate(CONSOLI_OUTPUT, 由来 = "Consoli") %>% 
+  union_all(mutate(SUB_CONSOLI_CALCULATED_OUTPUT, 由来 = "Calculated")) %>% 
+  union_all(mutate(SUB_CONSOLI_ADD_OUTPUT, 由来 = "Add"))
+
+
+# 2. 会社のタイプ（type）を設定
+# 【Consoli】由来のレコードの場合、Company_Codeが4桁ならば type＝'部門'、それ以外はtype＝'子会社'
+# 【Sub_Consoli_Calculated】または【Sub_Consoli_Add】由来のレコードの場合、type＝'孫会社'
+
+# 3. Currency 	  = 'JPY' ;
+# Currency_Unit = 1000000 ;
+# val_local 	  = val ; 
+
+# 4. YM, Company_Code をキーとして【Dup_Consoli_Sub】をleft joinし、
+# Flg_Del_Consoli,Flg_Del_Sub_Consoliを付加して不要業を削除
+#   type＝'子会社' かつ Flg_Del_Consoli = 1 のレコードを削除
+#   type = '孫会社' かつ Flg_Del_Sub_Consoli = 1 のレコードを削除
+
+ALL_COMPANY_STEP3 <- ALL_COMPANY_STEP1 %>% 
+  mutate(type = case_when(
+    由来 == "Consoli" & nchar(Company_Code) == 4 ~ "部門",
+    由来 == "Consoli" & nchar(Company_Code) != 4 ~ "子会社",
+    由来 != "Consoli"  ~ "孫会社",
+  )) %>%                                    # step 2 finished here
+  mutate(Currency = 'JPY',
+         Currency_Unit = 1000000,
+         val_local = val) %>%               # step 3 finished here
+  left_join(select(DUP_CONSOLI_SUB_OUTPUT, YM, Company_Code, Flg_Del_Consoli, Flg_Del_Sub_Consoli), 
+            by = c("YM", "Company_Code")) 
+
+# filterする前に、必ずNA値を他の非NA値に変換してから！！！（dplyr::filterの対NA処理の変な特性）
+# NA変化しないと：type == "部門" だけが残した！！！ 
+ALL_COMPANY_STEP4 <- ALL_COMPANY_STEP3 %>% 
+  mutate(Flg_Del_Consoli = ifelse(is.na(Flg_Del_Consoli), 99, Flg_Del_Consoli),
+         Flg_Del_Sub_Consoli = ifelse(is.na(Flg_Del_Sub_Consoli), 99, Flg_Del_Sub_Consoli)) %>% 
+  filter(!(type == '子会社' & Flg_Del_Consoli == 1)) %>% 
+  filter(!(type == '孫会社' & Flg_Del_Sub_Consoli == 1)) %>% 
+  mutate(Flg_Del_Consoli = ifelse(99, NA, Flg_Del_Consoli),
+         Flg_Del_Sub_Consoli = ifelse(99, NA, Flg_Del_Sub_Consoli))# step 4 finished here
+
+```
+
+
+
+```{r}
+
+# 5. Company_Codeをキーとして【Alive_List】をleft joinし、
+# 【Alive_List】由来のCompany_Codeが付加されないレコードを削除
+
+ALL_COMPANY_STEP5 <- ALL_COMPANY_STEP4 %>% 
+  left_join(mutate(ALIVE_LIST_OUTPUT, Alive_Company_Code = Company_Code),
+            by = "Company_Code") %>% 
+  filter(!is.na(Alive_Company_Code))  # step 5 finished here
+```
+
+
+```{r}
+# 6. Company_Codeをキーとして【MST_Company】をleft joinして、会社情報をセット
+# 	• Company_Name ：【MST_Company】由来のものを採用
+# 	• 主管部コード4桁：上記データの 主管部コード4桁 がNULLのレコードのみ【MST_Company】由来の主管部コード4桁を採用
+# 	
+# 	• Country,
+# 	決算期	,
+# 	担当経理部ｺｰﾄﾞ	,
+# 	'会社定義基礎.RC_RCMST_ZOKU.CODE_'n as 会社定義基礎0	,
+# 	関係会社区分ｺｰﾄﾞ	,
+# 	'会社定義基礎.RC_RCMST_ZOKU_1.COD'n as 会社定義基礎1	,
+# 	持分計算区分ｺｰﾄﾞ	,
+# 	'会社定義基礎.RC_RCMST_ZOKU_3.COD'n as 会社定義基礎2	,
+# 	主管部ｺｰﾄﾞ	,
+# 	主管部	,
+# 	比率合計	,
+# 	直接比率	,
+# 	no as 会社マスタ区分
+# 	
+# 	• if type = '部門' then	Country = 'JAPAN' ;
+# 	
+# 	• 最新会社マスタ登載有無 
+# 	if 会社マスタ区分 = 1 then 最新会社マスタ登載有無 = 1 ;
+# 	else 最新会社マスタ登載有無 = 0 ;
+
+ALL_COMPANY_STEP6 <- ALL_COMPANY_STEP5 %>% 
+  mutate(主管部コード4桁_a = 主管部コード4桁,
+         Raw_Company_Name = Company_Name) %>% 
+  select(YM,
+         主管部コード4桁_a,
+         Company_Code,
+         Raw_Company_Name,
+         type,
+         Account_Code,
+         Account_Name,
+         val,
+         Flg_PLorBS,  
+         P_Company_Code,
+         Currency,
+         Currency_Unit
+         ) %>% 
+  left_join((MST_COMPANY_OUTPUT %>% 
+              mutate(主管部コード4桁_b = 主管部コード4桁,
+                     会社定義基礎0 = 会社定義基礎.RC_RCMST_ZOKU.CODE_NM,
+                     会社定義基礎1 = 会社定義基礎.RC_RCMST_ZOKU_1.CODE_NM,
+                     会社定義基礎2 = 会社定義基礎.RC_RCMST_ZOKU_3.CODE_NM,
+                     会社マスタ区分 = 1) %>% 
+              select(Company_Code,
+                     主管部コード4桁_b,
+                     Company_Name,
+                     Country,
+                     決算期,
+                     担当経理部ｺｰﾄﾞ,
+                     会社定義基礎0,
+                     関係会社区分ｺｰﾄﾞ,
+                     会社定義基礎1,
+                     持分計算区分ｺｰﾄﾞ,
+                     会社定義基礎2,
+                     主管部ｺｰﾄﾞ,
+                     主管部,
+                     比率合計,
+                     直接比率,
+                     会社マスタ区分)),
+            by = "Company_Code") %>% 
+  mutate(主管部コード4桁 = ifelse(is.na(主管部コード4桁_a), 主管部コード4桁_b, 主管部コード4桁_a),
+         Country = ifelse(type == "部門", "JAPAN", Country),
+         最新会社マスタ登載有無 = ifelse(is.na(会社マスタ区分), 0, 1)) %>% 
+  select(-c(Raw_Company_Name, 主管部コード4桁_a, 主管部コード4桁_b))
+```
+
+
+```{r}
+# 7. 親会社名称をセット：上記データのP_Company_Codeと【MST_Company］のCompany_Codeをキーとして【MST_Company】をleft joinし、【MST_Company】由来のCompany_Name を P_Company_Name として格納
+
+ALL_COMPANY_STEP7 <- ALL_COMPANY_STEP6 %>% 
+  left_join(MST_COMPANY_OUTPUT %>% 
+              mutate(P_Company_Name = Company_Name) %>% 
+              select(Company_Code, P_Company_Name),
+            by = c("P_Company_Code" = "Company_Code"))
+
+```
+
+
+```{r}
+# 8. Company_Codeをキーとして【MST_APM】をleft joinして、APM_IFRSを付加
+ALL_COMPANY_STEP8 <- ALL_COMPANY_STEP7 %>% 
+  left_join(MST_APM_OUTPUT, by = "Company_Code")
+
+# 8.1追加処理：子会社がAPMのScopeA/ScopeBの孫会社について、「SCOPE A (サブ連結）」「SCOPE B(サブ連結）」
+ALL_COMPANY_STEP8_1 <- ALL_COMPANY_STEP8 %>% 
+  left_join(MST_APM_OUTPUT %>% 
+              mutate(APM_IFRS = paste0(APM_IFRS, "（サブ連結）")),
+            by = c("P_Company_Code" = "Company_Code")) %>% 
+  mutate(APM_IFRS = ifelse(is.na(APM_IFRS.x), APM_IFRS.y, APM_IFRS.x)) %>% 
+  select(-c(APM_IFRS.x, APM_IFRS.y))
+
+# 結果確認
+# ALL_COMPANY_STEP8_1 %>% 
+#   filter(type == "孫会社")
+```
+
+```{r}
+# 9. 主管部コード4桁名称の取得：
+# 	• if type = '部門' then 主管部コード4桁 = Company_Code
+# 	• 主管部コード4桁をキーとして、【MST_Main_Pipe_4】をleft joinし、主管部コード4桁_名称を付加
+# 	• if type = '部門' then Company_Name = 主管部コード4桁_名称
+
+ALL_COMPANY_STEP9 <- ALL_COMPANY_STEP8_1 %>% 
+  mutate(主管部コード4桁 = ifelse(type == '部門', Company_Code, 主管部コード4桁)) %>% 
+  left_join(MST_MAIN_PIPE_4_OUTPUT, by = "主管部コード4桁") %>% 
+  mutate(Company_Name = ifelse(type == "部門", 主管部コード4桁_名称, Company_Name))
+
+```
+
+```{r}
+# 10. YM, Company_Codeをキーとして【Company_Emp】をleft joinし、下記フィールドを付加
+# 	• '従業員数 - 当期末'n		  as 従業員数_当期末 
+# 	• '従業員数 - 前会計年度末'n	   as	従業員数_前会計年度末
+# 	• '従業員数 - 増減'n		  as	従業員数_増減
+# 	• '臨時従業員数 - 当期末'n	   as 臨時従業員数_当期末	
+# 	• '臨時従業員数 - 前会計年度末'n   as 臨時従業員数_前会計年度末	
+# 	• '臨時従業員数 - 増減'n		   as 臨時従業員数_増減
+ALL_COMPANY_STEP10 <- ALL_COMPANY_STEP9 %>% 
+  left_join(COMPANY_EMP_OUTPUT %>% 
+              rename(従業員数_当期末 = `従業員数 - 当期末`,
+                     従業員数_前会計年度末 = `従業員数 - 前会計年度末`,
+                     従業員数_増減 = `従業員数 - 増減`,
+                     臨時従業員数_当期末 = `臨時従業員数 - 当期末`,
+                     臨時従業員数_前会計年度末 = `臨時従業員数 - 前会計年度末`,
+                     臨時従業員数_増減 = `臨時従業員数 - 増減`),
+            by = c("YM", "Company_Code"))
+
+```
+
+
+```{r}
+# 11. Account_Codeをキーとして【MST_Account_Name】をleft joinして、重要科目フラグ「Account_X」を付加
+ALL_COMPANY_STEP11 <- ALL_COMPANY_STEP10 %>% 
+  left_join(MST_ACCOUNT_NAME_OUTPUT %>% 
+              select(Account_Code, Account_X),
+            by = "Account_Code")
+
+```
+
+
+```{r}
+# 12. "売上原価"文字含むaccount nameを全部対象として、はvalを±逆転させる（if find( Account_Name , '売上原価' ) > 0 then val = -1 * val ）
+
+ALL_COMPANY_STEP12 <- ALL_COMPANY_STEP11 %>% 
+  mutate(val = ifelse((grepl("売上原価", Account_Name)), -1*val, val)) 
+
+# 売上原価				
+# 公表売上原価				
+# (廃止)売上原価
+  
+```
+
+
+```{r}
+# output
+
+ALL_COMPANY_OUTPUT <- ALL_COMPANY_STEP12 %>% 
+  select(YM,
+			   Company_Code,
+			   Company_Name,
+			   Country,
+			   P_Company_Code,
+			   P_Company_Name,
+			   type,
+			   APM_IFRS,
+			   主管部コード4桁,
+			   主管部コード4桁_名称,
+			   最新会社マスタ登載有無,
+			   決算期,
+			   担当経理部ｺｰﾄﾞ,
+			   会社定義基礎0,
+			   関係会社区分ｺｰﾄﾞ,
+			   会社定義基礎1,
+			   持分計算区分ｺｰﾄﾞ,
+			   会社定義基礎2,
+			   主管部ｺｰﾄﾞ,
+			   主管部,
+			   比率合計,
+			   直接比率,
+			   Currency,
+			   Currency_Unit,
+			   従業員数_当期末,
+			   従業員数_前会計年度末,
+			   従業員数_増減,
+			   臨時従業員数_当期末,
+			   臨時従業員数_前会計年度末,
+			   臨時従業員数_増減,
+			   Flg_PLorBS,
+			   Account_X ,
+			   Account_Code,
+			   Account_Name,
+			   val)
+
+write_tsv(ALL_COMPANY_OUTPUT, "11_ALL_COMPANY.tsv") 
+
+# End
+```
+
+
+
+<!-- ==================================test================================= -->
+
+```{r}
+ALL_COMPANY_STEP12 %>% 
+  select(YM,
+			   Company_Code,
+			   Company_Name,
+         Account_Name, 
+			   val) %>% 
+  filter(Account_Name=="公表売上原価") %>% 
+  arrange(YM,Company_Code)
+
+CONSOLI_OUTPUT %>% 
+  select(YM,
+			   Company_Code,
+			   Company_Name,
+         Account_Name, 
+			   val) %>% 
+  filter(Account_Name=="公表売上原価") %>% 
+  arrange(YM,Company_Code)
+```
+
+
+
+```{r}
+ALL_COMPANY_STEP11 %>% 
+  select(Account_Name) %>% 
+  distinct() %>% 
+  filter(grepl("売上原価", Account_Name))
+```
+
+
+```{r}
+ALL_COMPANY_STEP11 %>% 
+  select(YM,
+			   Company_Code,
+			   Company_Name,
+         Account_Name, 
+			   val) %>% 
+  filter(Account_Name=="公表売上原価")
+
+ALL_COMPANY_STEP12 %>% 
+  select(YM,
+			   Company_Code,
+			   Company_Name,
+         Account_Name, 
+			   val) %>% 
+  filter(Account_Name=="公表売上原価")
+```
+
+```{r}
+ALL_COMPANY_OUTPUT%>% 
+  select(YM,
+			   Company_Code,
+			   Company_Name,
+         Account_Name, 
+			   最新会社マスタ登載有無) %>% 
+  group_by(最新会社マスタ登載有無) %>% 
+  count(最新会社マスタ登載有無)
+```
+

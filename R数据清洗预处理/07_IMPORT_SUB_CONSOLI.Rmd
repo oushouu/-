@@ -1,0 +1,295 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(magrittr)
+```
+
+```{r}
+list.files(path = "./A1_Raw_Data", pattern = NULL, all.files = FALSE,
+           full.names = FALSE, recursive = FALSE,
+           ignore.case = FALSE, include.dirs = FALSE, no.. = FALSE)
+```
+
+```{r}
+# create 07 programing parameters table
+# 201903の09画面データ再抽出してから、ファイル格式変わったので、パラメタ表も再定義する（2020年1月22日）
+para_table_07 <- INPUT_DATA_LIST %>% 
+  filter(Program == "Import_Sub_Consoli") %>% 
+  filter(SNO != 17) %>%                       # SSRI09のデータ存在しないので、readしない
+  mutate(YM = ifelse(ファイル名 %in% c("SCAO09.xlsx","SCCN09.xlsx","SCEH09.xlsx","SCME09.xlsx","SCOA09.xlsx"), 
+                     "201903",
+                     str_sub(ファイル名, -11, -6)),
+         path = paste0("./A1_Raw_Data/", ファイル名),
+         範囲 = str_sub(範囲, 2)) %>% 
+  arrange(YM) %>% 
+  mutate(SNO = seq(1, nrow(.), 1)) %>% 
+  mutate(tibble_name = ifelse(SNO > 23,
+                              paste0(str_sub(path, 15, 18), YM),
+                              paste0(str_sub(ファイル名, -16, -13), YM))) %>% 
+  select(SNO, YM, path, シート名, 範囲,tibble_name)
+
+```
+
+
+```{r}
+# EXCELから各sheetをloopで取り込み、リストに保存
+SUB_CONSOLI_INPUT_LIST <- list()
+for(i in pull(para_table_07[, "SNO"])){
+  SUB_CONSOLI_INPUT_LIST[[pull(para_table_07[i, "tibble_name"])]] <- read_excel(
+                                 path = pull(para_table_07[i, "path"]),
+                                 sheet = pull(para_table_07[i, "シート名"]),
+                                 range = pull(para_table_07[i, "範囲"]),
+                                 col_names = FALSE)
+}
+```
+
+
+```{r}
+# Extract P_COMPANY CODE from each input table
+P_COMPANY_vector_SUB_COSOLI <- c()
+for(i in pull(para_table_07[, "SNO"])){
+  P_COMPANY_vector_SUB_COSOLI[i] <- pull(SUB_CONSOLI_INPUT_LIST[[i]][2,2])
+}
+
+# add it to parameter table
+para_table_07_add_P <- para_table_07 %>% 
+  mutate(P_Company_Code = P_COMPANY_vector_SUB_COSOLI)
+```
+
+
+```{r}
+# input data から余計な行列を削除
+SUB_CONSOLI_EDIT1_LIST <- list()
+for(i in pull(para_table_07[, "SNO"])){
+  SUB_CONSOLI_EDIT1_LIST[[pull(para_table_07[i, "tibble_name"])]] <- 
+    SUB_CONSOLI_INPUT_LIST[[pull(para_table_07[i, "tibble_name"])]] %>%
+      select(-c(3,4,5,6,7,8,9)) %>% #remove unnecessary columns
+      mutate(row_index = seq(4, nrow(.)+3, 1)) %>%
+      select(row_index, everything()) %>%
+      filter(row_index == 33 | row_index > 35) #remove unnecessary rows
+}
+```
+
+
+```{r}
+# create account, company, and values tables
+
+SUB_CONSOLI_ACCOUNT_LIST <- list()
+SUB_CONSOLI_COMPANY_LIST <- list()
+SUB_CONSOLI_VALUE_LIST <- list()
+
+for(i in pull(para_table_07[, "SNO"])){
+  # ACCOUNTの部分を取る
+  SUB_CONSOLI_ACCOUNT_LIST[[pull(para_table_07[i, "tibble_name"])]] <- 
+    SUB_CONSOLI_EDIT1_LIST[[pull(para_table_07[i, "tibble_name"])]] %>%
+      select(c(1,2,3)) %>% 
+      filter(!row_index %in% c(33, 36)) %>% 
+      rename(Account_Code_09_Raw = `...1`,
+            Account_Name_09 = `...2`) %>% 
+      mutate(Account_Code_09 = str_sub(Account_Code_09_Raw, 1, 5))
+  
+  # COMPANYの部分を取る
+  SUB_CONSOLI_COMPANY_LIST[[pull(para_table_07[i, "tibble_name"])]] <- 
+    SUB_CONSOLI_EDIT1_LIST[[pull(para_table_07[i, "tibble_name"])]] %>%
+      filter(row_index %in% c(33, 36)) %>% 
+      select(-c(2,3)) %>% 
+      gather(var, value, -row_index) %>%
+      spread(row_index, value) %>% 
+      rename(col_index = var,
+            Company_Code = `33`,
+            Company_Name = `36`) %>% 
+      mutate(col_index = as.integer(str_sub(col_index, 4))) %>% 
+      arrange(col_index) %>%
+      fill(Company_Code)
+  
+  # VALUEの部分を取る
+  SUB_CONSOLI_VALUE_LIST[[pull(para_table_07[i, "tibble_name"])]] <- 
+    SUB_CONSOLI_EDIT1_LIST[[pull(para_table_07[i, "tibble_name"])]] %>%
+      filter(!row_index %in% c(33, 36)) %>% 
+      select(-c(2,3)) %>% 
+      gather(var, value, -row_index) %>% 
+      rename(col_index = var,
+            s_val = value) %>% 
+      mutate(col_index = as.integer(str_sub(col_index, 4)))
+}
+```
+
+
+```{r}
+SUB_CONSOLI_PRE_OUTPUT_LIST <- list()
+
+for(i in pull(para_table_07[, "SNO"])){
+  SUB_CONSOLI_PRE_OUTPUT_LIST[[pull(para_table_07[i, "tibble_name"])]] <- 
+    SUB_CONSOLI_VALUE_LIST[[pull(para_table_07[i, "tibble_name"])]] %>% 
+      left_join(SUB_CONSOLI_COMPANY_LIST[[pull(para_table_07[i, "tibble_name"])]], by = "col_index") %>% 
+      left_join(SUB_CONSOLI_ACCOUNT_LIST[[pull(para_table_07[i, "tibble_name"])]], by = "row_index") %>% 
+      arrange(Account_Code_09_Raw) %>% 
+      group_by(Company_Code, Account_Code_09_Raw) %>% 
+      summarise(Company_Name = first(Company_Name),
+                Account_Code_09 = first(Account_Code_09),
+                Account_Name_09 = first(Account_Name_09),
+                val = sum(as.numeric(s_val))
+                ) %>% 
+      select(Company_Code, Company_Name, Account_Code_09_Raw, Account_Code_09, Account_Name_09, val) %>% 
+      mutate(YM = pull(para_table_07_add_P[i, "YM"]),
+             P_Company_Code = pull(para_table_07_add_P[i, "P_Company_Code"])) %>% 
+      filter(Account_Code_09_Raw != "5100XXXXXXBZZ") #5100XXXXXXBZZはに該当するレコードは削除
+}
+```
+
+
+```{r}
+SUB_CONSOLI_OUTPUT <- do.call(rbind, SUB_CONSOLI_PRE_OUTPUT_LIST) %>% 
+  mutate(Currency = "USD_M",
+         Currency_Unit = 1000) %>% 
+  select(YM, Account_Code_09, Company_Code, Company_Name, P_Company_Code, Currency, Currency_Unit, val) %>% 
+  ungroup(Company_Code) %>% 
+  mutate(Company_Code = str_sub(Company_Code, 3)) %>% #先頭2文字（'S_'）を除いた値を Company_Codeとして格納 
+  mutate(Company_Name = str_extract(Company_Name, "^.*(?=\\r)"))
+ 
+
+
+write_tsv(SUB_CONSOLI_OUTPUT, "07_SUB_CONSOLI.tsv") 
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#==========================test================================
+
+```{r}
+SUB_CONSOLI_OUTPUT %>% 
+  filter(Company_Name == "TBC CORPORATION") %>% 
+  select(YM, Company_Code, Company_Name, P_Company_Code) %>% 
+  unique() # EXCELファイルにはこの会社が二つコードある
+
+
+SUB_CONSOLI_OUTPUT %>% 
+  select(Company_Name) %>% 
+  unique()
+
+SUB_CONSOLI_OUTPUT %>% 
+  select(Company_Code) %>% 
+  unique()
+
+SUB_CONSOLI_OUTPUT %>% 
+  select(Company_Code, Company_Name) %>% 
+  unique() %>% 
+  group_by(Company_Name) %>% 
+  count()
+```
+
+
+```{r}
+
+SUB_CONSOLI_OUTPUT %>% 
+  filter(Company_Code == "A000049S")
+```
+
+
+```{r}
+SUB_CONSOLI_OUTPUT %>% 
+  select(Company_Name) %>% 
+  unique() %>% 
+  mutate(Company_Name2 = str_extract(Company_Name, "^.*(?=\\r)"))
+  
+```
+
+
+```{r}
+old_SUB_CONSOLI <- read_excel("./old/07_SUB_CONSOLI.xlsx")
+```
+
+
+```{r}
+# SASで抽出sub consoliデータ行数と比べ：一致
+
+SUB_CONSOLI_OUTPUT %>% 
+  filter(YM != "201903") 
+
+
+old_SUB_CONSOLI 
+```
+
+
+
+```{r}
+SUB_CONSOLI_PRE_OUTPUT_LIST[[24]] %>% 
+  filter(Account_Code_09 == "5100X")
+  group_by(Account_Code_09) %>% 
+  count() %>% 
+  arrange(desc(n))
+
+SUB_CONSOLI_VALUE_LIST[[24]] %>% 
+      left_join(SUB_CONSOLI_COMPANY_LIST[[24]]) %>% 
+      left_join(SUB_CONSOLI_ACCOUNT_LIST[[24]]) %>% 
+      arrange(Account_Code_09_Raw) %>% 
+      group_by(Company_Code, Account_Code_09_Raw) %>% 
+      summarise(Company_Name = first(Company_Name),
+                Account_Code_09 = first(Account_Code_09),
+                Account_Name_09 = first(Account_Name_09),
+                val = sum(as.numeric(s_val))
+                ) %>% 
+      select(Company_Code, Company_Name, Account_Code_09_Raw, Account_Code_09, Account_Name_09, val) %>% 
+      mutate(YM = pull(para_table_07_add_P[24, "YM"]), 
+             P_Company_Code = pull(para_table_07_add_P[24, "P_Company_Code"])) 
+```
+
+
+```{r}
+SUB_CONSOLI_EDIT1_LIST[[24]] %>%
+      select(c(1,2,3)) %>% 
+      filter(!row_index %in% c(33, 36)) %>% 
+      rename(Account_Code_09_Raw = `...1`,
+            Account_Name_09 = `...2`) %>% 
+      mutate(Account_Code_09 = str_sub(Account_Code_09_Raw, 1, 5))
+
+SUB_CONSOLI_EDIT1_LIST$SCOA201903 %>%
+      filter(row_index %in% c(33, 36)) %>% 
+      select(-c(2,3)) %>% 
+      gather(var, value, -row_index) %>%
+      spread(row_index, value) %>% 
+      rename(col_index = var,
+            Company_Code = `33`,
+            Company_Name = `36`) %>% 
+      mutate(col_index = as.integer(str_sub(col_index, 4))) %>% 
+      arrange(col_index) %>% 
+      fill(Company_Code)
+
+SUB_CONSOLI_EDIT1_LIST[[24]] %>%
+      filter(!row_index %in% c(33, 36)) %>% 
+      select(-c(2,3)) %>% 
+      gather(var, value, -row_index) %>% 
+      rename(col_index = var,
+            s_val = value)
+```
+
+```{r}
+SUB_CONSOLI_EDIT1_LIST[[24]]
+```

@@ -1,0 +1,110 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(magrittr)
+```
+
+```{r}
+# input data
+CONSOLI_OUTPUT
+SUB_CONSOLI_OUTPUT
+```
+
+```{r}
+# 06_CONSOLI.tsvの内容をCompany_Code, YMごとに全科目の金額合計（Consoli_Amount）を算出
+CHECK_CONSOLI_AMOUNT_OUTPUT <- CONSOLI_OUTPUT %>% 
+  group_by(YM, Company_Code) %>% 
+  summarise(Company_Name = first(Company_Name),
+            Consoli_Amount = sum(as.numeric(val)),
+            Flg_Consoli = 1) %>% 
+  arrange(Company_Code)
+
+write_tsv(CHECK_CONSOLI_AMOUNT_OUTPUT, "08_CHECK_CONSOLI_AMOUNT.tsv") 
+```
+
+```{r}
+# 07_SUB_CONSOLI.tsvの内容をCompany_Code, YMごとに全科目の金額合計（Sub_Consoli_Amount）を算出
+CHECK_SUB_CONSOLI_AMOUNT_OUTPUT <- SUB_CONSOLI_OUTPUT %>% 
+  group_by(YM, Company_Code) %>% 
+  summarise(Company_Name = first(Company_Name),
+            Sub_Consoli_Amount = sum(as.numeric(val)),
+            Flg_Sub_Consoli = 1) %>% 
+  arrange(Company_Code)
+
+write_tsv(CHECK_SUB_CONSOLI_AMOUNT_OUTPUT, "08_CHECK_SUB_CONSOLI_AMOUNT.tsv") 
+```
+
+
+```{r}
+# 2. 【CHECK_CONSOLI_AMOUNT】、【CHECK_SUB_CONSOLI_AMOUNT】をCompany_Code, YMをキーとしてjoin
+# 連結精算表と09画面に両方に存在する会社について、
+# ①連結精算表に金額がある会社→09画面データ用の削除フラグ（Flg_Del_Sub_Consoli）をセット　
+# ②連結精算表に金額がない会社→連結精算表データ用の削除フラグ（Flg_Del_Consoli）をセット
+
+DUP_CONSOLI_SUB_OUTPUT <- CHECK_CONSOLI_AMOUNT_OUTPUT %>% 
+  full_join(CHECK_SUB_CONSOLI_AMOUNT_OUTPUT, by = c("YM", "Company_Code")) %>% 
+  arrange(Company_Code, YM) %>% 
+  mutate(Company_Name = ifelse(!is.na(Company_Name.y), Company_Name.y, Company_Name.x)) %>% 　#子会社名優先
+  mutate(Flg_Del_Sub_Consoli = ifelse(Flg_Consoli==1 & Flg_Sub_Consoli==1 & Consoli_Amount!=0, 1, NA),
+         Flg_Del_Consoli = ifelse(Flg_Consoli==1 & Flg_Sub_Consoli==1 & Consoli_Amount==0, 1, NA)) %>% 
+  select(YM, 
+         Company_Code, 
+         Company_Name, 
+         Consoli_Amount, 
+         Flg_Consoli, 
+         Sub_Consoli_Amount,
+         Flg_Sub_Consoli,
+         Flg_Del_Sub_Consoli,
+         Flg_Del_Consoli)
+  
+
+write_tsv(DUP_CONSOLI_SUB_OUTPUT, "08_DUP_CONSOLI_SUB.tsv") 
+
+# check row
+# DUP_CONSOLI_SUB_OUTPUT %>% 
+#   filter(YM != "201903") %>% 
+#   filter(Flg_Consoli == 1, Flg_Sub_Consoli == 1) %>% 
+#   filter(Flg_Del_Consoli == 1)
+```
+
+
+
+```{r}
+# DUP_CONSOLI_SUBのうち、最新年度の金額が0でない会社（Consoli_Amountが0またはNULLでない or Sub_Consoli_Amountが0またはNULLでない）を抽出し、Company_CodeのListを作成
+
+# 全年度のデータを処理すると、まずgroup by(Company_Code)、summarise(max(as.integer(YM)))をしてから処理する
+ALIVE_LIST_OUTPUT <- DUP_CONSOLI_SUB_OUTPUT %>% 
+  mutate(Consoli_Amount = ifelse(is.na(Consoli_Amount), 0, Consoli_Amount), # covert NA to 0 as "0 amount"
+         Sub_Consoli_Amount = ifelse(is.na(Sub_Consoli_Amount), 0, Sub_Consoli_Amount)) %>%
+  filter(YM == "201903") %>% 
+  filter(Consoli_Amount != 0 | Sub_Consoli_Amount != 0) %>% 
+  ungroup(YM) %>% 
+  select(Company_Code)
+
+write_tsv(ALIVE_LIST_OUTPUT, "08_ALIVE_LIST.tsv") 
+```
+
+
+
+#=====================test=========================
+
+```{r}
+
+write.csv(DUP_CONSOLI_SUB_OUTPUT,"DUP_CONSOLI_SUB_OUTPUT.csv")
+DUP_CONSOLI_SUB_OUTPUT %>% 
+  filter(YM != "201903")
+```
+
+
+```{r}
+CHECK_CONSOLI_AMOUNT_OUTPUT %>% filter(YM != "201903")
+CHECK_SUB_CONSOLI_AMOUNT_OUTPUT %>% filter(YM != "201903")
+DUP_CONSOLI_SUB_OUTPUT %>% filter(YM != "201903")
+ALIVE_LIST_OUTPUT %>% count(Company_Code) %>% arrange(desc(n))
+```

@@ -1,0 +1,278 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(magrittr)
+```
+
+
+```{r}
+# 1. 重要科目のレコードのみに絞り込む（if Account_X = 'X'）
+ALL_COMPANY_CALCULATED_STEP1 <- ALL_COMPANY_OUTPUT %>% 
+  filter(Account_X == "X")
+```
+
+
+```{r}
+# 2. 前年度データをleft joinする
+ALL_COMPANY_CALCULATED_STEP2 <- ALL_COMPANY_CALCULATED_STEP1 %>% 
+  left_join(ALL_COMPANY_CALCULATED_STEP1 %>% 
+              mutate(YM = as.character(as.integer(YM)+100),
+                     val_前年 = val) %>% 
+              select(YM, Company_Code, Account_Code, val_前年),
+            by = c("YM", "Company_Code", "Account_Code")
+            ) %>% 
+  arrange(YM, Company_Code, P_Company_Code)
+```
+
+
+```{r}
+# 3. 前年からの増減率を算出する：if val_前年 not in ( . , 0 )  then 増減率 = ( val - val_前年) / abs( val_前年 )  ;
+ALL_COMPANY_CALCULATED_STEP3 <- ALL_COMPANY_CALCULATED_STEP2 %>% 
+  mutate(増減率 = ifelse(!(val_前年 == 0|is.na(val_前年)), (val-val_前年)/abs(val_前年), NA))
+```
+
+
+```{r}
+#  create Account_Name Index Master（列名（Account_Name）を順番に並べために）
+TARGET_ACCOUNT <- MST_ACCOUNT_NAME_OUTPUT %>% 
+  filter(Account_X == "X") %>% 
+  mutate(no = as.character(seq(1, nrow(.), 1))) %>% 
+  mutate(index = ifelse(nchar(no) == 1, paste0("00", no), paste0("0", no))) %>% 
+  select(no, everything())
+
+```
+
+
+
+```{r}
+# 以下のマクロで取り込むデータ内容の蓄積先となるデータセットを作っておく
+ALL_COMPANY_CALCULATED_STEP4 <- ALL_COMPANY_CALCULATED_STEP3 %>% 
+  select(YM,
+		     Company_Code,
+		     Company_Name,
+		     Country,
+		     P_Company_Code,
+		     P_Company_Name,
+		     type,
+		     APM_IFRS,
+		     主管部コード4桁,
+		     主管部コード4桁_名称,
+		     最新会社マスタ登載有無 ,
+		     決算期,
+		     担当経理部ｺｰﾄﾞ,
+	       会社定義基礎0,
+	       関係会社区分ｺｰﾄﾞ,
+	       会社定義基礎1,
+	       持分計算区分ｺｰﾄﾞ,
+	       会社定義基礎2,
+	       主管部ｺｰﾄﾞ,
+	       主管部,
+	       比率合計,
+	       直接比率,
+	       Currency,
+	       Currency_Unit,
+	       # 期首レート,
+	       # 期末レート,
+	       # 平均レート,
+	       従業員数_当期末,
+	       従業員数_前会計年度末,
+	       従業員数_増減,
+	       臨時従業員数_当期末,
+	       臨時従業員数_前会計年度末,
+	       臨時従業員数_増減) %>% 
+  distinct() %>% 
+  arrange(YM, Company_Code, P_Company_Code)
+  
+```
+
+
+```{r}
+
+# 	Account_Name から「 '(（）):' ) 」の文字を取り除く
+# 	Account_Name を変換する：'R/E' → 'R／E' 
+# 	Account_Name を変換する：'現金・現金同等物' → '現金／現金同等物'
+
+
+# 	例：Account_Name='営業活動に係る利益'の縦横変換結果
+# 		val		→ 営業活動に係る利益 
+# 		val_前年   	→ 営業活動に係る利益_前年 
+#     増減率		→ 営業活動に係る利益_増減率 
+
+ALL_COMPANY_CALCULATED_STEP3_2 <- ALL_COMPANY_CALCULATED_STEP3 %>%
+  select(YM, Company_Code, P_Company_Code, Account_Code, Account_Name, val, val_前年, 増減率) %>% 
+  left_join(TARGET_ACCOUNT %>% 
+              select(Account_Name, index),
+            by = "Account_Name") %>% # Account_Nameのインディクス番号を付ける
+  mutate(Account_Name_0 = Account_Name,
+         Account_Name = gsub("[「 '(（）):' ) 」]","", Account_Name),
+         Account_Name = gsub("R/E","R／E", Account_Name),
+         Account_Name = gsub("現金・現金同等物","現金／現金同等物", Account_Name)) %>% # リネーム
+  mutate(Account_Name_ = paste0(index, Account_Name), 
+         Account_Name_前年 = paste0(index, Account_Name,"_前年"),
+         Account_Name_増減率 = paste0(index, Account_Name,"_増減率")) %>% # index付き前年と増加率指標名追加
+  mutate(val = ifelse(is.na(val), 999999999, val)) %>%
+  mutate(val_前年 = ifelse(is.na(val_前年), 999999999, val_前年)) %>%
+  mutate(増減率 = ifelse(is.na(増減率), 999999999, 増減率)) %>% # 元データにNAの値を臨時的に数値に変換する
+  spread(Account_Name_, val) %>% 
+  spread(Account_Name_前年, val_前年) %>% 
+  spread(Account_Name_増減率, 増減率) %>% # 指標名を列として横持ちに変換する
+  select(-c(index, Account_Code)) %>% # 不要な列を削除
+  select(sort(names(.))) %>% # 列をindexの並び順に並び替え
+  select(YM, Company_Code, P_Company_Code, everything())
+
+```
+
+
+```{r}
+# YM, Company_Code粒度でよけなNA行を削除(3分ぐらい時間かかる)
+ALL_COMPANY_CALCULATED_STEP3_3 <- ALL_COMPANY_CALCULATED_STEP3_2 %>% 
+  group_by(YM, Company_Code) %>%
+  summarise_if(is.numeric, min, na.rm = T)
+```
+
+
+```{r}
+# 列名に含む頭文字のインディクスを削除、group by後Infになったデータと数値になったNAデータをNAに戻す
+ALL_COMPANY_CALCULATED_STEP3_4 <- ALL_COMPANY_CALCULATED_STEP3_3 %>% 
+  rename_if(is.numeric, str_sub, start = 4) %>%  # rename columns
+  mutate_if(is.numeric, funs(ifelse(is.infinite(.), NA, .))) %>% # replace inf to NA
+  mutate_if(is.numeric, funs(ifelse(. == 999999999, NA, .))) # convert 99999999 back to NA
+```
+
+
+```{r}
+# 横結合前の行並び順の一致することを確認する
+pull(ALL_COMPANY_CALCULATED_STEP4,"YM") %>% 
+  identical(pull(ALL_COMPANY_CALCULATED_STEP3_4,"YM"))
+
+pull(ALL_COMPANY_CALCULATED_STEP4,"Company_Code") %>% 
+  identical(pull(ALL_COMPANY_CALCULATED_STEP3_4,"Company_Code"))
+
+# 横結合
+ALL_COMPANY_CALCULATED_STEP4_2 <- ALL_COMPANY_CALCULATED_STEP4 %>% 
+  cbind(ALL_COMPANY_CALCULATED_STEP3_4 %>% 
+          ungroup(YM, Company_Code) %>% 
+          select(-c(YM, Company_Code)))
+```
+
+
+```{r}
+# 5. 集計に用いる指標を算出する
+ALL_COMPANY_CALCULATED_STEP5_1 <- ALL_COMPANY_CALCULATED_STEP4_2 %>% 
+  mutate(在庫回転期間 = ifelse(!(is.na(公表売上原価)|公表売上原価 == 0), 商品計/(公表売上原価/12), NA),
+         在庫純資産比率 = ifelse(!(is.na(資本合計)|資本合計 == 0), 商品計/資本合計, NA),
+         在庫総資産比率 = ifelse(!(is.na(負債及び資本合計)|負債及び資本合計 == 0), 商品計/負債及び資本合計, NA),
+         売上債権 = 営業債権流動計 + 営業債権非流動計,
+         売上債権回転期間 = ifelse(!(is.na(公表売上高)|公表売上高 == 0), 売上債権/(公表売上高/12), NA),
+         のれんの純資産割合 = ifelse(!(is.na(資本合計)|資本合計 == 0), 非償却暖簾計/資本合計, NA),
+         繰延税金資産負債 = 繰延税金資産計 - 繰延税金負債計,
+         繰延税金資産負債_利益剰余金比率 = ifelse(!(is.na(`R／E末`)|`R／E末` == 0), 繰延税金資産負債/`R／E末`, NA),
+         その他売上 = 出向者経費戻入 + 設備賃貸料 + 受取ﾘｰｽ料,
+         その他売上比率 = ifelse(!(is.na(公表売上高)|公表売上高 == 0), その他売上/公表売上高, NA),
+         従業員1人あたり売上高 = ifelse(!(is.na(従業員数_当期末)|従業員数_当期末 == 0), 公表売上高/従業員数_当期末, NA),
+         従業員1人あたり売上高_臨時含む = ifelse(!(is.na(従業員数_当期末+臨時従業員数_当期末)|従業員数_当期末+臨時従業員数_当期末 == 0), 公表売上高/(従業員数_当期末+臨時従業員数_当期末), NA))
+```
+
+
+```{r}
+# 売上債権,売上債権回転期間の増加率を算出するため、前年度データをJoin
+ALL_COMPANY_CALCULATED_STEP5_2 <- ALL_COMPANY_CALCULATED_STEP5_1 %>% 
+  left_join(ALL_COMPANY_CALCULATED_STEP5_1 %>% 
+              mutate(YM = as.character(as.integer(YM)+100),
+                     売上債権_前年 = 売上債権,
+                     売上債権回転期間_前年 = 売上債権回転期間) %>% 
+              select(YM, Company_Code, 売上債権_前年, 売上債権回転期間_前年),
+            by = c("YM", "Company_Code")
+            ) %>% 
+  arrange(YM, Company_Code, P_Company_Code)
+
+```
+
+
+```{r}
+# 売上債権_増減率, 売上債権回転期間_増減率, 売上債権増減率／売上高増減率を算出する
+ALL_COMPANY_CALCULATED_STEP5_3 <- ALL_COMPANY_CALCULATED_STEP5_2 %>% 
+  mutate(売上債権_増減率 = ifelse(!(is.na(売上債権_前年)|売上債権_前年 == 0), (売上債権-売上債権_前年)/abs( 売上債権_前年), NA),
+		     売上債権回転期間_増減率 = ifelse(!(is.na(売上債権回転期間_前年)|売上債権回転期間_前年 == 0), (売上債権回転期間-売上債権回転期間_前年)/abs( 売上債権回転期間_前年), NA),
+		     `売上債権増減率／売上高増減率` = ifelse(!(is.na(公表売上高_増減率)|公表売上高_増減率 == 0), 売上債権_増減率/公表売上高_増減率, NA))
+```
+
+
+```{r}
+ALL_COMPANY_CALCULATED_OUTPUT <- ALL_COMPANY_CALCULATED_STEP5_3 %>% 
+  arrange(YM, Company_Code)
+
+write_tsv(ALL_COMPANY_CALCULATED_OUTPUT, "12_ALL_COMPANY_CALCULATED.tsv", na = "") 
+
+# END
+```
+
+
+
+<!-- ==============================test============================================ -->
+
+```{r}
+ALL_COMPANY_CALCULATED_OUTPUT %>% 
+  select(YM, Company_Code, P_Company_Code, type, APM_IFRS) %>% 
+  filter(Company_Code == "A0000W99")
+```
+
+
+
+```{r}
+ALL_COMPANY_CALCULATED_OUTPUT %>% 
+  select(YM, Company_Code, 公表売上原価, 在庫回転期間)
+```
+
+
+```{r}
+ALL_COMPANY_CALCULATED_STEP5_2 %>% 
+  select(YM, Company_Code, P_Company_Code, 売上債権, 売上債権回転期間, 売上債権_前年, 売上債権回転期間_前年) %>% 
+  filter(YM == "201603")
+
+```
+
+
+
+```{r}
+               
+ALL_COMPANY_CALCULATED_STEP4_2 %>% 
+  filter(!(is.na(従業員数_当期末)|従業員数_当期末 == 0))
+
+ALL_COMPANY_CALCULATED_STEP4_2 %>% 
+  filter(is.na(従業員数_当期末))
+
+ALL_COMPANY_CALCULATED_STEP4_2 %>% 
+  filter(従業員数_当期末 == 0)
+
+ALL_COMPANY_CALCULATED_STEP4_2 %>% 
+  filter(is.na(従業員数_当期末)|従業員数_当期末 == 0)
+
+ALL_COMPANY_CALCULATED_STEP4_2 %>% 
+  filter(is.na(従業員数_当期末), 
+         is.na(臨時従業員数_当期末)) %>% 
+  select(YM, Company_Code, 従業員数_当期末, 臨時従業員数_当期末)
+
+
+
+ALL_COMPANY_CALCULATED_STEP4_2 %>% 
+  filter(is.na(従業員数_当期末+臨時従業員数_当期末)) %>% 
+  select(YM, Company_Code, 従業員数_当期末, 臨時従業員数_当期末)
+```
+
+
+
+
+
+
+
+
+
+
+

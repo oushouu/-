@@ -1,0 +1,306 @@
+---
+title: "check result"
+output: html_notebook
+---
+```{r}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(magrittr)
+```
+
+
+# 2.1_Raw Data_ファイル一覧
+## CONSOLI売上金額（円）
+```{r CONSOLI sum check}
+# 2.1_Raw Data_ファイル一覧 
+# J18:J27 
+# 売上金額（円）
+# D_連結精算表データ
+
+CONSOLI_THREE_JOIN_LIST$`201503_1` %>% 
+  filter(Account_Name == "公表売上高") %>% 
+  select(val) %>% 
+  sum()
+
+CONSOLI_THREE_JOIN_LIST$`201503_2` %>% 
+  filter(Account_Name == "公表売上高") %>% 
+  select(val) %>% 
+  sum()
+
+CONSOLI_THREE_JOIN_LIST$`201603_1` %>% 
+  filter(Account_Name == "公表売上高") %>% 
+  select(val) %>% 
+  sum()
+
+CONSOLI_THREE_JOIN_LIST$`201603_2` %>% 
+  filter(Account_Name == "公表売上高") %>% 
+  select(val) %>% 
+  sum()
+
+CONSOLI_THREE_JOIN_LIST$`201703_1` %>% 
+  filter(Account_Name == "公表売上高") %>% 
+  select(val) %>% 
+  sum()
+
+CONSOLI_THREE_JOIN_LIST$`201703_2` %>% 
+  filter(Account_Name == "公表売上高") %>% 
+  select(val) %>% 
+  sum()
+
+CONSOLI_THREE_JOIN_LIST$`201803_1` %>% 
+  filter(Account_Name == "公表売上高") %>% 
+  select(val) %>% 
+  sum()
+
+CONSOLI_THREE_JOIN_LIST$`201803_2` %>% 
+  filter(Account_Name == "公表売上高") %>% 
+  select(val) %>% 
+  sum()
+
+CONSOLI_THREE_JOIN_LIST$`201903_1` %>% 
+  filter(Account_Name == "公表売上高") %>% 
+  select(val) %>% 
+  sum()
+
+CONSOLI_THREE_JOIN_LIST$`201903_2` %>% 
+  filter(Account_Name == "公表売上高") %>% 
+  select(val) %>% 
+  sum()
+```
+
+## SUB_CONSOLI売上金額（円）
+```{r SUB_CONSOLI sum check}
+# 2.1_Raw Data_ファイル一覧 
+# J28:J56 
+# 売上金額（円）
+# D_09画面（サブ連結）データ
+
+for(sub in names(SUB_CONSOLI_PRE_OUTPUT_LIST)){
+  print(sub)
+  sum_sub <- SUB_CONSOLI_PRE_OUTPUT_LIST[[sub]] %>%
+    filter(Account_Code_09 %in% c("6000X","6001X","6002X","6003X","6004X",
+                                "6005X","6006X","6007X","6008X","6009X","6010X")) %>%
+    ungroup(Company_Code) %>%
+    select(val) %>%
+    sum()
+  
+  print(sum_sub*1000000,digits = 16)
+  print("--------------------")
+}
+
+# SUB_CONSOLI_PRE_OUTPUT_LIST$SCOA201803 %>% 
+#   filter(Account_Code_09 %in% c("6000X","6001X","6002X","6003X","6004X",
+#                                 "6005X","6006X","6007X","6008X","6009X","6010X")) %>% 
+#   ungroup(Company_Code) %>% 
+#   select(val) %>% 
+#   sum()
+```
+
+```{r sum digits check}
+# 2.1_Raw Data_ファイル一覧 
+# J28:J56 
+# 売上金額（円）
+# D_09画面（サブ連結）データ
+
+SUB_CONSOLI_PRE_OUTPUT_LIST$SCOA201903%>%
+    filter(Account_Code_09 %in% c("6000X","6001X","6002X","6003X","6004X",
+                                "6005X","6006X","6007X","6008X","6009X","6010X")) %>%
+    ungroup(Company_Code) %>%
+    select(val) %>%
+    sum() %>% 
+    print(digits = 20)
+
+SUB_CONSOLI_PRE_OUTPUT_LIST$SCOA201903%>%
+    filter(Account_Code_09 %in% c("6000X","6001X","6002X","6003X","6004X",
+                                "6005X","6006X","6007X","6008X","6009X","6010X")) %>%
+    ungroup(Company_Code) %>%
+    select(val) %>%
+    sum() %>% 
+    print()
+
+
+```
+
+```{r check sum in csv}
+# 2.1_Raw Data_ファイル一覧 
+# J28:J56 
+# 売上金額（円）
+# D_09画面（サブ連結）データ
+SUB_CONSOLI_PRE_OUTPUT_LIST$SCEH201903%>%
+    filter(Account_Code_09 %in% c("6000X","6001X","6002X","6003X","6004X",
+                                "6005X","6006X","6007X","6008X","6009X","6010X")) %>%
+    ungroup(Company_Code) %>%
+    select(val) %>%
+    write.csv("./check/SCEH201903_SUM.csv")
+
+SUB_CONSOLI_PRE_OUTPUT_LIST$SCAO201903%>%
+    filter(Account_Code_09 %in% c("6000X","6001X","6002X","6003X","6004X",
+                                "6005X","6006X","6007X","6008X","6009X","6010X")) %>%
+    ungroup(Company_Code) %>%
+    select(val) %>%
+    write.csv("./check/SCAO201903_SUM.csv")
+
+SUB_CONSOLI_PRE_OUTPUT_LIST$SCOA201903%>%
+    filter(Account_Code_09 %in% c("6000X","6001X","6002X","6003X","6004X",
+                                "6005X","6006X","6007X","6008X","6009X","6010X")) %>%
+    ungroup(Company_Code) %>%
+    select(val) %>%
+    write.csv("./check/SCOA201903_SUM.csv")
+```
+
+
+# 3.1_データ処理_データ関連図
+## CONSOLI科目数、レコード数確認
+```{r "YM&Company_Code" "row" check}
+# 3.1_データ処理_データ関連図
+# AO23:BE23 
+# 孫会社数、科目数
+# D_09画面（サブ連結）データ
+CONSOLI_OUTPUT %>% 
+  select(YM, Company_Code) %>% 
+  distinct() %>% 
+  nrow()
+
+CONSOLI_OUTPUT %>% 
+  nrow()
+```
+
+
+## SUB_CONSOLI孫会社数、科目数、レコード数確認
+```{r "YM&Company_Code" "Account_Code_09" "row" check}
+# 3.1_データ処理_データ関連図
+# AN62:AY64 
+# 孫会社数、科目数
+# D_09画面（サブ連結）データ
+SUB_CONSOLI_OUTPUT %>% 
+  select(YM, Company_Code) %>% 
+  distinct() %>% 
+  nrow()
+
+SUB_CONSOLI_OUTPUT %>% 
+  select(Account_Code_09) %>% 
+  distinct() %>% 
+  nrow()
+
+SUB_CONSOLI_OUTPUT %>% 
+  nrow()
+```
+
+# 4.1_Cleaned Data_ファイル一覧
+## 12_ALL_COMPANY_CALCULATED.tsv売上金額総額（円）
+```{r 12_ALL_COMPANY_CALCULATED 公表売上高 sum}
+ALL_COMPANY_CALCULATED_OUTPUT %>% 
+  nrow()
+
+ALL_COMPANY_CALCULATED_OUTPUT %>% 
+  select(公表売上高) %>% 
+  sum() %>% 
+  print(digits = 20)
+  
+```
+
+## 4.1.1 ①09画面と連結精算表の両方に値がある場合、連結精算表のデータを採用
+```{r}
+# [①連結精算表にも金額あり] Sheet内容の再現
+
+ALL_COMPANY_STEP3 %>% 
+  filter(Account_Name == "公表売上高") %>%
+  filter(YM != "201903") %>%
+  filter((type == '子会社' & Flg_Del_Consoli == 1)|(type == '孫会社' & Flg_Del_Sub_Consoli == 1)) %>% 
+  select(val) %>% 
+  sum()
+```
+
+
+```{r ①連結精算表にも金額あり sheet output}
+# ①09画面と連結精算表の両方に値がある場合、連結精算表のデータを採用
+ALL_COMPANY_STEP3 %>% 
+  select(YM,
+         Company_Code,
+         Company_Name,
+         Account_Code,
+         Account_Name,
+         val,
+         Flg_PLorBS,
+         P_Company_Code,
+         Currency,
+         Currency_Unit,
+         主管部コード4桁,
+         type,
+         val_local,
+         Flg_Del_Consoli,
+         Flg_Del_Sub_Consoli) %>% 
+  # filter(Account_Name == "公表売上高") %>% 
+  # filter(YM != "201903") %>% 
+  filter((type == '子会社' & Flg_Del_Consoli == 1)|(type == '孫会社' & Flg_Del_Sub_Consoli == 1)) %>% 
+  write.csv("./check/①連結精算表にも金額あり.csv", na = "")
+
+#2019年データ
+ALL_COMPANY_STEP3 %>% 
+  filter(Account_Name == "公表売上高") %>%
+  filter((type == '子会社' & Flg_Del_Consoli == 1)|(type == '孫会社' & Flg_Del_Sub_Consoli == 1)) %>% 
+  select(val) %>% 
+  sum() %>% 
+  print(digits = 20)
+```
+
+## 4.1.2 ②201803の金額がない会社については、分析対象外としてすべての年度データを削除
+```{r ②201803の金額なし output}
+# ②201803の金額がない会社については、分析対象外としてすべての年度データを削除
+ALL_COMPANY_STEP4 %>% 
+  left_join(mutate(ALIVE_LIST_OUTPUT, Alive_Company_Code = Company_Code),
+            by = "Company_Code") %>% 
+  filter(is.na(Alive_Company_Code)) %>% 
+  write.csv("./check/②201903の金額なし.csv", na = "")
+  
+
+# 201903時点に存在しない会社の歴史総売上額
+ALL_COMPANY_STEP4 %>% 
+  left_join(mutate(ALIVE_LIST_OUTPUT, Alive_Company_Code = Company_Code),
+            by = "Company_Code") %>% 
+  filter(is.na(Alive_Company_Code)) %>% 
+  filter(Account_Name == "公表売上高") %>%
+  select(val) %>% 
+  sum() %>% 
+  print(digits = 20)
+```
+
+
+
+#test
+```{r}
+ALL_COMPANY_STEP7 %>% 
+  left_join(MST_APM_OUTPUT, by = "Company_Code")
+```
+
+```{r}
+ALL_COMPANY_STEP8_1 <- ALL_COMPANY_STEP8 %>% 
+  left_join(MST_APM_OUTPUT %>% 
+              mutate(APM_IFRS = paste0(APM_IFRS, "（サブ連結）")),
+            by = c("P_Company_Code" = "Company_Code")) %>% 
+  mutate(APM_IFRS = ifelse(is.na(APM_IFRS.x), APM_IFRS.y, APM_IFRS.x))
+
+
+```
+
+```{r}
+ALL_COMPANY_CALCULATED_OUTPUT %>% 
+  filter(最新会社マスタ登載有無 == "1") %>% 
+  mutate(`公表売上高（円）` = 公表売上高*1000000) %>% 
+  select(`公表売上高（円）`) %>%
+  sum() %>% 
+  print(digits = 20)
+```
+
+
+```{r}
+ALL_COMPANY_CALCULATED_OUTPUT %>% names
+
+ALL_COMPANY_CALCULATED_OUTPUT %>% 
+  # ungroup(Company_Code) %>%
+  select(売上金額) %>%
+  sum() %>% 
+  print(digits = 20)
+```
+

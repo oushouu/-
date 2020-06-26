@@ -1,0 +1,49 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(magrittr)
+```
+
+```{r}
+# input data
+SUB_CONSOLI_OUTPUT
+MST_ACCOUNT_OVERWRITE_OUTPUT
+MST_COMPANY_OUTPUT
+MST_ACCOUNT_NAME_OUTPUT
+```
+
+```{r}
+# 1. Account_Code_09 をキーとして、【SUB_CONSOLI】に【MST_Account_Overwrite】をleft joinし、Account_Code、Account_Nameを付加
+# 
+# （連結精算表データに1対1で対応しないサブ連データ（09画面）の科目コードの場合、科目コードと科目名称はNULL）
+# 
+# 2. 「Flg_PLorBS」フラグをセット：Account_Codeの頭1桁が6以上の場合はPL科目、6未満の場合はBS科目
+# 
+# P_Company_Code（子会社コード）と【MST_Company】のCompany_Code をキーとして left Joinし、主管部コード4桁を取得する
+
+SUB_CONSOLI_CALCULATED_OUTPUT <- SUB_CONSOLI_OUTPUT %>% 
+  left_join(MST_ACCOUNT_OVERWRITE_OUTPUT, by = "Account_Code_09") %>% #1010
+  # mutate(Account_Code = ifelse(is.na(Account_Code), Account_Code_09, Account_Code)) %>% #1020*不要
+  # left_join(MST_ACCOUNT_NAME_OUTPUT, by = "Account_Code") %>% #1030*不要
+  mutate(Flg_PLorBS = ifelse(str_sub(Account_Code,1,1) %in% seq(1,5,1), "BS", "PL")) %>% 
+  left_join(select(MST_COMPANY_OUTPUT, Company_Code, 主管部コード4桁), by = "Company_Code") %>% 
+  select(YM, Company_Code, Account_Code_09, Account_Code, 
+         Account_Name, P_Company_Code, val, Flg_PLorBS, 主管部コード4桁) %>% 
+  arrange(YM, Company_Code, Account_Code)
+
+write_tsv(SUB_CONSOLI_CALCULATED_OUTPUT, "09_SUB_CONSOLI_CALCULATED.tsv") 
+# 主管部コード4桁がNAの会社が存在する
+
+
+```
+
+#=========test=========
+
+
+
