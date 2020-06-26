@@ -1,0 +1,113 @@
+---
+title: "R Notebook"
+output:
+  word_document: default
+  html_notebook: default
+---
+
+```{r include = FALSE}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(magrittr)
+```
+
+```{r include = FALSE}
+df1 <- read_xlsx("【NTTコム】（回収サイト）2018年度請求一覧.xlsx", range = "A2:S13981")
+df2 <- read_xlsx("【NTTコム】1日平均売上高分析_2-⑦⑨ 201704.xlsx", range = "A2:AL3926", sheet = "3.完成一覧(過去3期＋当期1-3Q累積）" )
+```
+
+```{r}
+df1.1 <- df1 %>% 
+  select(計上日, `発行希望日（請求進捗情報）`, `支払期限（請求進捗情報）`, 回収サイト, `計上～発行希望日`, `計上～支払期限`) %>% 
+  rename(record_date = 計上日,
+         hope_date = `発行希望日（請求進捗情報）`,
+         deadline_date =`支払期限（請求進捗情報）`) %>% 
+  mutate(record_date = ymd(record_date),
+         hope_date = ymd(hope_date),
+         deadline_date = ymd(deadline_date))
+
+df1.2 <- df1.1 %>% 
+  filter(`計上～支払期限` > 0)
+```
+
+```{r}
+df2.1 <- df2 %>% 
+  select(工期開始日, 工期終了日, 完成年月補正,平均１日辺り売上高) %>% 
+  rename(start_date = 工期開始日,
+         end_date = 工期終了日,
+         finish_date = 完成年月補正,
+         SalesPerDay = 平均１日辺り売上高) %>% 
+  mutate(start_date = ymd(start_date),
+         end_date = ymd(end_date),
+         finish_date = ymd(finish_date),
+         log_SalesPerDay = log(SalesPerDay))
+```
+
+# ガンマ分布のパラメータは二つある（shapeとscale）：
+## shape * scale = mean
+## shape = (mean/sd)^2 = mean^2/variance
+## scale = sd^2/mean = variance/mean
+
+
+```{r}
+# パラメータ設定
+
+# df1
+# `計上～支払期限`統計量計算
+mean <- df1.2$`計上～支払期限` %>% mean()
+sd <- df1.2$`計上～支払期限` %>% sd()
+var <- df1.2$`計上～支払期限` %>% var()
+
+alpha <-  mean^2/var
+beta <- var/mean
+rate <- mean/var
+
+# df2
+# log(平均１日辺り売上高)
+mean2 <- df2.1$log_SalesPerDay %>% mean()
+sd2 <- df2.1$log_SalesPerDay %>% sd()
+var2 <- df2.1$log_SalesPerDay %>% var()
+
+alpha2 <-  mean2^2/var2
+beta2 <- var2/mean2
+rate2 <- mean2/var2
+```
+
+
+```{r}
+df1.2 %>% 
+  ggplot(aes(`計上～支払期限`)) +
+  geom_histogram(aes(y =..density..), bins = 40) +
+  geom_line(aes(y = dgamma(`計上～支払期限`, shape = alpha, rate = rate)), color = "red")
+```
+
+
+```{r}
+adj_rate <- 0.16
+adj_shape <- adj_rate*(mean-5)
+
+df1.2 %>% 
+  ggplot(aes(`計上～支払期限`)) +
+  geom_histogram(aes(y =..density..), bins = 40) +
+  geom_line(aes(y = dgamma(`計上～支払期限`, shape = adj_shape, rate = adj_rate)), color = "red")
+```
+
+```{r}
+df2.1 %>% 
+  ggplot(aes(log_SalesPerDay)) +
+  geom_histogram(aes(y =..density..), bins = 40) +
+  geom_line(aes(y = dgamma(log_SalesPerDay, shape = alpha2, rate = rate2)), color = "red")
+```
+
+
+```{r}
+adj_rate2 = 14.5
+adj_shape2 = adj_rate2*(mean2 - 0.1)
+
+df2.1 %>% 
+  ggplot(aes(log_SalesPerDay)) +
+  geom_histogram(aes(y =..density..), bins = 40) +
+  geom_line(aes(y = dgamma(log_SalesPerDay, shape = adj_shape2, rate = adj_rate2)), color = "red")
+```
+
