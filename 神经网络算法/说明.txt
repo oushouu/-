@@ -1,1 +1,3 @@
-competition2 altenative algorithm 
+ANN：competition2 altenative algorithm of GBM
+数据预处理部分：./../决策树系列/GB 第261行为止
+后续部分赤字风险评分整理部分：./model_wang_2_後半.R
