@@ -1,0 +1,29 @@
+library(networkD3)
+library(tidyverse)
+library(magrittr)
+
+links <- tibble(
+  source = c("不可经营","不可经营","不可经营",
+             "I类","I类","I类",
+             "II类","II类","II类",
+             "III类","III类","III类"),
+  target = c("1类","2类","3类",
+             "1类","2类","3类",
+             "1类","2类","3类",
+             "1类","2类","3类"),
+  value = c(2434,2314,2561,
+            156971,1960,62,
+            4292,149221,21046,
+            138,464,46434)
+)
+
+nodes <- tibble(name = c(links$source, links$target))%>% unique()
+
+links$IDsource <- match(links$source, nodes$name)-1 
+links$IDtarget <- match(links$target, nodes$name)-1
+
+p <- sankeyNetwork(Links = links, Nodes = nodes,
+              Source = "IDsource", Target = "IDtarget",
+              Value = "value", NodeID = "name", 
+              sinksRight=FALSE)
+p
